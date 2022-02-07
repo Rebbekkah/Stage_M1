@@ -1,0 +1,102 @@
+---
+title: "Stage cdf 2"
+author: "Rebecca Goulancourt"
+date: "25/03/2021"
+output: pdf_document
+---
+
+
+# Génération des données
+
+```{r}
+data <- rnorm(100, 0.5, 2)
+data <- as.matrix(data)
+```
+
+Je trie la matrice:
+```{r}
+data_sort <- as.matrix(sort(data, decreasing = FALSE))
+```
+
+
+# Calcul du cdf
+
+```{r}
+ecdf_data_sort <- ecdf(data_sort)
+s <-  rep(0, nrow(data_sort))
+for (i in 1:nrow(data_sort)) {
+  s[i] <- s[i] + ecdf_data_sort(i) # vecteur contenant les cdf à chaque i 
+}
+```
+
+```{r}
+sc <- matrix(0, nrow = nrow(data_sort), ncol = ncol(data_sort), byrow = TRUE)
+for (i in 1:nrow(data_sort)) {
+  sc[i] <- i/nrow(data_sort) # matrice de la cdf
+}
+```
+
+Je combine dans une même matrice les valeurs et cdf correspondantes:
+```{r}
+s <- as.matrix(s)
+mat_cdf <-  cbind(data_sort, s, sc)
+colnames(mat_cdf) <- c("valeurs x", "s", "sc")
+```
+
+# plot
+
+```{r}
+plot(density(data_sort), main = "fonciton de densité", xlab = "x", ylab = "densité de probabilité")
+abline(v = mean(data_sort), col = "red")
+legend("topleft", legend = "moyenne", lty = 1:2,  col = "red")
+```
+
+```{r}
+plot(data_sort, type = "l", main = "plot des données", ylab = "valeurs", xlab = "individus")
+```
+
+Je récupère l'indice de la moyenne
+```{r}
+vec_data_sort <- as.vector(data_sort)
+mean <- mean(vec_data_sort)
+for (i in 1:length(vec_data_sort)) {
+  if (vec_data_sort[i] >= mean) {
+    ind <- as.matrix(c(i, vec_data_sort[i]))
+    break
+  }
+}
+indice <- ind[1,]
+value <- ind[2,]
+```
+
+Lorsque i dépasse la moyenne alors Y[i] = 1 - Y[i]
+```{r}
+Y <- as.vector(sc)
+for (i in 1:length(Y)) {
+  if (i < indice) {
+    Y[i] <- Y[i]
+  }
+  else if (i >= indice) {
+    Y[i] <- 1 - Y[i]
+  }
+}
+Y
+```
+
+Je mets les valeurs de x en absolue
+```{r}
+data_sort_abs <- mean(data_sort) - data_sort
+```
+
+```{r}
+plot(mat_cdf[,1], Y, log ="y", main ="cdf", ylab = "log(cdf)", xlab = "x", type = "l")
+```
+
+
+
+
+
+
+
+
+

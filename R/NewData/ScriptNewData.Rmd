@@ -1,0 +1,330 @@
+---
+title: "Script for newData"
+author: "Rebecca Goulancourt"
+output: pdf_document
+---
+
+```{r}
+path_output <- "/Users/rgoulanc/Desktop/Rebecca/FAC/M1BI-IPFB/SEM2/Stage/BERRET_BOSTOEN/R/NewData/Outputs"
+path_inputs <- "/Users/rgoulanc/Desktop/Rebecca/FAC/M1BI-IPFB/SEM2/Stage/BERRET_BOSTOEN/R/NewData/Inputs"
+library(stringr)
+```
+
+
+Period = function() {
+  library(stringr)
+  f <- unlist(str_extract_all(alldata[i], "\\d+"))[2]
+  f <- as.numeric(f)*10^-3   # mHz -> Hz
+  period <- 2/(f)
+  cat("The period of one oscillation is : ", period, "\n")
+  
+  start_osc <- 10
+  end_osc <- 15
+  psirad_value <- NULL
+  nrow <- 0
+  for (i in 1:nrow(data)) {
+    if (start_osc <= data$time.s[i] & data$time.s[i] <= end_osc) {
+      nrow <-  nrow + 1
+      psirad_value[i] <- data$psi.t..rad[i]
+    } 
+  } 
+  psirad_value <- na.omit(psirad_value)
+  psimaxR <- max(psirad_value)
+  cat("number of value of psi(t) (on 1 oscillation) : ", nrow, "\n",
+      "maximum of the oscillation : ", psimaxR)
+  
+  plot(data$time.s, data$psi.t..rad, main = "angular frequency vs time (1 oscillation)",
+       sub = alldata[i],
+       xlab = "time (s)",
+       ylab = "angular frequency (rad)",
+       type = "l",
+       xlim = c(10, 10 + period),
+       ylim = c(-3,0))
+  
+}
+
+
+  max <- NULL
+  for (i in 2:nrow(data)) {
+    if (i == nrow(data)) {
+      break
+    }
+    if (data$psi.t..rad[i] > data$psi.t..rad[i-1] & data$psi.t..rad[i] > data$psi.t..rad[i+1]) {
+      max <- rbind(max, as.data.frame(data[i, 1:2]))
+      
+    }
+  }
+  max <- na.omit(max)
+  
+  #outliers (false peak of the curve)
+  diff_max <- diff(max$psi.t..rad)
+  mean_diff_max <- mean(diff_max)
+  box <- boxplot(diff_max)
+  cat("outliers : ", box$out)
+  
+  diff_max_int <- diff_max[!diff_max %in% box$out]
+  mean_diff_max_int <- mean(diff_max_int)
+  box2 <- boxplot(diff_max_int)
+  
+```{r}
+Maximum_curve = function(file) {
+  max <- NULL
+  for (i in 2:nrow(data)) {
+    if (i == nrow(data)-1) {
+      break
+    }
+    if (data$psi.t..rad[i] > data$psi.t..rad[i-1] & data$psi.t..rad[i] > data$psi.t..rad[i+1]) {
+      max <- rbind(max, as.data.frame(data[i, 1:2]))
+      
+    }
+  }
+  max <- na.omit(max)
+  
+  #outliers (false peak of the curve)
+  diff_max <- diff(max$psi.t..rad)
+  mean_diff_max <- mean(diff_max)
+  box <- boxplot(diff_max)
+  cat("outliers : ", box$out, rep("\n", 2))
+  plot(diff_max)
+  lines(diff_max)
+  
+  #outlier_ligne <- NULL
+  #for (i in 1:length(diff_max)) {
+  #outlier_ligne[i] <- which(box$out[i] == diff_max)
+  #}
+  #outlier_ligne <- na.omit(outlier_ligne)
+  #which(box$out == diff_max)
+  
+  diff_max_int <- diff_max[!diff_max %in% box$out]
+  #colnames(diff_max_int)[1] <- "diff_max_int"
+  mean_diff_max_int <- mean(diff_max_int)
+  box2 <- boxplot(diff_max_int)
+  
+  setwd(path_output)
+  write.table(diff_max_int, file = paste(file, "max_curve.txt", sep = "_"), append = FALSE, sep = "\t", col.names = TRUE)
+  
+}
+```
+
+```{r}
+Maximum_point = function(file) {
+  
+max <- NULL
+for (i in 2:nrow(data)) {
+  if (data$psi.t..rad[i] > data$psi.t..rad[i-1] & data$psi.t..rad[i] > data$psi.t..rad[i+1]) {
+    max <- rbind(max, as.data.frame(data[i, 1:2]))
+    if (nrow(max) == 2) { break }
+  }
+}
+max <- na.omit(max)
+#hyp_point <- nrow(data)/nrow(max) # number of points for 1 oscillation
+numb_point <- as.numeric(rownames(max))
+numb_point <- sum(numb_point)/2 # nb de points moyens pour 1 oscillation
+
+
+max_osc <- NULL
+vec <- NULL
+k <- 1
+for (i in 1:nrow(data)) {
+  if (i == nrow(data)) { break }
+  if (i <= k + numb_point) {
+    vec[i] <- data$psi.t..rad[i]
+  }
+  else if (i >= k + numb_point) {
+    k <- k + numb_point
+    vec <- na.omit(vec)
+    max_osc[i] <- max(vec)
+    vec <- NULL
+  }
+}
+max_osc <- na.omit(max_osc)
+max_osc <- as.data.frame(max_osc)
+
+setwd(path_output)
+write.table(max_osc, file = paste(file, "max_osc.txt", sep = "_"), append = FALSE, sep = "\t", col.names = TRUE)
+
+}
+```
+
+```{r}
+Maximum_drop = function(file) {
+  
+max_drop <- NULL
+for (i in 2:nrow(data)) {
+  if (i >= nrow(data)) { break }
+  if (data$psi.t..rad[i+1] <= data$psi.t..rad[i] - data$psi.t..rad[i]*4/100) {
+    max_drop[i] <- data$psi.t..rad[i-1]
+    #eval.parent(substitute(i <- i+5))
+    i %+=% 3
+    print(i)
+  }
+  if (i > 30) { break }
+}
+
+max_drop <- na.omit(max_drop)
+max_drop <- as.data.frame(max_drop)
+
+setwd(path_output)
+write.table(max_drop, file = paste(file, "max_drop.txt", sep = "_"), append = FALSE, sep = "\t", col.names = TRUE)
+
+}
+```
+
+
+```{r}
+Maximum_chg = function(file) {
+  chg <- NULL # changements relatifs
+  for (i in 1:nrow(data)) {
+    if (i == nrow(data)) { break }
+    chg[i] <- (data$psi.t..rad[i+1]-data$psi.t..rad[i])/data$psi.t..rad[i]
+  }
+  plot(chg, ylim = c(-0.2, 0.05), xlim = c(500, 600))
+  lines(chg)
+  abline(h = 0, col = "blue") # on prends i-2
+  #si dessus alors courbe monte
+  #drop = drop de valeur dans la courbe donc un max juste avant
+  chg0 <- which(chg == 0)
+  chg_pos <- which(chg > 0)
+  chg_neg <- which(chg < 0)
+  
+  diff_mean <- mean(diff(chg))
+  x <- diff_mean - 4/100
+  abline(h = x, col = " green")
+  
+  max_chg <- NULL
+  for (i in 2:length(chg)) {
+    if (i == length(chg)) { 
+      break
+    }
+    if (chg[i] < chg[i-1] & chg[i] < 0 & chg[i+1] <= chg[i] + (chg[i]*5/100)) {
+      if (i > 2) {
+        max_chg[i] <- data$psi.t..rad[i-2]
+      }
+    }
+  }
+  max_chg <- as.data.frame(na.omit(max_chg))
+  colnames(max_chg)[1] <-  "max"
+  
+  time <- NULL
+  for (i in 1:nrow(max_chg)) {
+    for (j in 1:nrow(data)) {
+      if (max_chg$max[i] == data$psi.t..rad[j]) {
+        time[i] <-data$time.s[j]
+      }
+      #if (i == nrow(max_chg)) { break }
+    }
+  }
+  time <- as.data.frame(time)
+  max_dat <- cbind(time, max_chg)
+  
+  setwd(path_output)
+  write.table(max_dat, file = paste(file, "max_chg.txt", sep = "_"), append = FALSE, sep = "\t", col.names = TRUE)
+}
+```
+
+  
+
+```{r}
+data <- NULL
+alldata <- list.files(path = path_inputs, ".txt", full.names = FALSE)
+for (i in 1:length(alldata)) {
+  setwd(path_inputs)
+  data <- read.table(alldata[i], header = TRUE, sep = "\t", dec = ".")
+
+  par(mfrow=c(1,1))
+  plot(data$time.s, data$psi.t..rad, main = "angular frequency vs time", sub = alldata[i],
+       xlab = "time (s)",
+       ylab = "angular frequency (rad)",
+       type = "l")
+  plot(data$time.s, data$psi.t..rad, main = "angular frequency vs time", sub = alldata[i],
+       xlab = "time (s)",
+       ylab = "angular frequency (rad)",
+       type = "p",
+       xlim = c(155, 180))
+  lines(data$time.s, data$psi.t..rad, col = "red")
+  #dev.print(device = pdf, file = "Rplot2.pdf", width = 300)
+
+  if (alldata[i] == "alldata_film10_104mHz.txt") {
+  plot(data$time.s, data$psi.t..rad, main = "angular frequency vs time", sub = alldata[i],
+       xlab = "time (s)",
+       ylab = "angular frequency (rad)",
+       type = "p",
+       xlim = c(0,15),
+       ylim = c(-3,0))
+    lines(data$time.s, data$psi.t..rad, col = "blue")
+    dev.print(device = pdf, file = "Rplot5_20.pdf", width = 300)
+    plot(data$time.s, data$psi.t..rad, main = "angular frequency vs time", sub = alldata[i],
+       xlab = "time (s)",
+       ylab = "angular frequency (rad)",
+       type = "p",
+       xlim = c(60,70))
+       #ylim = c(-3,0)),
+    lines (data$time.s, data$psi.t..rad, col = "green")
+  }
+
+  #omega <- NULL
+
+  #delta_teta <- as.data.frame(data$psi.Max - data$psi.Min)
+  
+  #diff_teta[1] <- data$psi.Min[1]
+  #diff_teta <- as.data.frame(c(diff_teta, diff(data$psi.Min)))
+
+  #colnames(delta_teta)[1] <- "delta_teta"
+  #colnames(deffi_teta)[1] <- "omega"
+  #delta_teta <- na.omit(delta_teta)
+  #diff_teta <- na.omit(diff_teta)
+  
+  #setwd(path_output)
+  #write.table(delta_teta, file = paste0("delta_teta_", alldata[i]), row.names = FALSE)
+  #write.table(diff_teta, file = paste0("delta_teta_", alldata[i]), row.names = FALSE)
+   
+  #viscosity <- as.vector(omega[,1])
+  #elasticity <- as.vector(diff_teta[,1])
+
+  #Maximum
+  file = paste("film", str_extract(alldata[i], "\\d+")[1], sep ="_")
+  #Maximum_curve(file)
+  #Maximum_chg(file)
+  #Maximum_drop(file)
+  #Maximum_period(file)
+  #Maximum_point(file)
+  
+  break
+}
+```
+
+
+```{r}
+plot(data$time.s[1:1800], diff(data$psi.t..rad), type = "l", ylim = c(-0.1, 0.2), xlim = c(0, 50)) #detrending
+
+#plot(diff(data$psi.t..rad), type = "l", ylim = c(-0.1, 0.2))
+
+#plot(diff_max)
+#lines(diff_max)
+
+
+nb <- nrow(data)/nrow(max)
+nb
+
+vec <- NULL
+start <- 1
+for (i in start:nrow(data)) {
+  vec[i] <- data$psi.t..rad[i]
+  if (i >= nb) {
+    start <- i
+    nb <- nb*2
+  }
+}
+
+chg <- NULL # changements relatifs
+for (i in 1:nrow(data)) {
+  if (i == nrow(data)) { break }
+  chg[i] <- (data$psi.t..rad[i+1]-data$psi.t..rad[i])/data$psi.t..rad[i]
+}
+plot(chg, ylim = c(-0.1, 0.1), xlim = c(1500, 1550))
+lines(chg)
+abline(h = 0, col = "blue") # on prends i-2
+#si dessus alors courbe monte
+#which(chg == 0)
+```
+

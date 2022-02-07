@@ -1,0 +1,76 @@
+---
+title: "Stage cdf & pdf"
+author: "Rebecca Goulancourt"
+date: "17/03/2021"
+output: pdf_document
+---
+
+# Génération des données
+Via la loi t Student
+```{r}
+data <- rf(1000, 12, 14)
+#n <- sample(1:1000, 1000, replace = TRUE)
+```
+
+# Plot
+##plot global
+```{r}
+plot(data, main = "plot des données", xlab = "Nombre d'individus")
+```
+
+## plot de la densité
+```{r}
+density_data <- density(data)
+mean_data <- mean(data)
+plot(density_data, main = "Fonction de densité des données (data)", xlab = "x")
+abline(v = mean_data, col = "red")
+legend("topright", legend = "moyenne", lty = 1:2,  col = "red")
+```
+
+## Valeurs des densités pour chaque x
+
+```{r}
+for (i in 0:8) {
+  print(density_data$y[i])
+}
+summary(density_data$y)
+```
+
+## Plot de la fonction de répartition
+
+log-normal distribution?
+
+```{r}
+ecdf_data <- ecdf(data)
+plot(ecdf_data, main = "Distribution Cumulative des données (data)", xlab = "x", ylab = "fréquence")
+abline(v = mean_data, col = "red")
+legend("topleft", legend = "moyenne", lty = 1:2,  col = "red")
+```
+
+## CDF en log
+
+```{r}
+plot(ecdf_data, main = "Distribution Cumulative des données (data)", 
+     xlab = "x", 
+     ylab = "cdf",
+     ylim = c(0.001, 1),
+     xlim = c(0.001, 5),
+     log = "y")
+     #asp = 10)
+axis(1, pos = mean_data, cex.axis = 0.8)
+abline(v = mean_data, col = "red")
+legend("topleft", legend = "moyenne", lty = 1:2,  col = "red")
+```
+
+
+## Valeurs de probabilités pour chaque x 
+
+```{r}
+for (i in 0:5) {
+  print(ecdf_data(i))
+}
+summary(ecdf_data)
+```
+
+
+

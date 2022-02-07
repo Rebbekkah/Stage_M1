@@ -1,0 +1,140 @@
+---
+title: "Script for Random Walk simulation"
+author: "Claude Bostoen"
+output: pdf_document
+---
+
+
+
+```{r}
+library(stats)
+# set random number seed
+#set.seed(123)
+library(nlme)
+library(sp)
+#library(gstat)
+
+#In order to save the generated plots
+path_plots <- "/Users/rgoulanc/desktop/Rebecca/FAC/M1BI-IPFB/SEM2/Stage/BERRET_BOSTOEN/R/SimulationRW/Plots"
+```
+
+```{r}
+#length of time series
+TT <- 1000
+
+# initialize for running Number of Simulations
+Nsamples <- 1
+sum <- NULL
+average <- NULL
+sum_acf <- NULL
+average_acf <- NULL
+x <- NULL
+alfa <- 0.6
+```
+for (i in 1:TT) {
+    sum[i] <- 0
+    average[i] <- 0
+    x[i] <- 0 #pourquoi l'avoir rempli de 0?
+    
+    if(i == TT) {
+        break
+    }
+    else {
+        sum_acf[i] <- 0
+        average_acf[i] <- 0
+    }
+}
+sum_acf_ <- data.frame(sum_acf)
+
+```{r}
+sum <- rep(0, TT)
+average <-  sum
+
+sum_acf <- rep(0, TT-1)
+average_acf <- sum_acf
+
+sum_acf_ <- data.frame(sum_acf)
+```
+
+```{r}
+Var = function() {
+  t <- 1:TT
+  datax <- as.data.frame(xx)
+  dataf <- cbind(xx, t)
+  #coordinates(dataf) <- ~ xx+t 
+  print(class(dataf))
+  var <- Variogram(datax, diff(dataf$t))
+  plot(var)
+}
+```
+
+```{r}
+# setup plot area
+par(mfrow = c(1, 1), mar = c(5, 4, 1, 2))
+
+x[TT] <- 0
+for (i in 1:TT-1) {
+    x[i] <- i-1
+}
+
+x_plot <- as.data.frame(x[1:TT-1])
+
+Nb_sim <- 10
+for(k in 1:Nb_sim) {
+  for (i in 1:Nsamples) {
+    # initialize {x_t} and {w_t}
+    xx <- rnorm(n = TT, mean = 0, sd = 0.5)
+    ww <- xx
+    sum[1] <- sum[1] + xx[1]
+    ## compute values 2 thru TT
+    for (t in 2:TT) {
+      xx[t] <- alfa*xx[t - 1] + ww[t]
+      sum[t] <- sum[t] + xx[t]
+    }
+    cat("Nombre de simulations : ", k, "\n")
+    cat("Nombre d'échantillons : ", i, rep("\n", 2))
+
+    
+    setwd(path_plots)
+    if(i == 1) {
+      plot(xx, ylab = expression(italic(x[t])), xlab = "lag", type = "l", col = "gray", 
+           ylim = c(-5, 5),
+           main = "correlogram",
+           sub = paste0("Sample", i, "Sim", k))    
+    }
+    else {   
+      lines(xx, ylab = expression(italic(x[t])), col = "gray", ylim = c(-5, 5))
+    }
+    #dev.print(device = png, file = paste0("x[t]", "Sample", i, "Sim", k, ".png"), width = 600)
+    
+    par(mfrow=c(1,2))
+    acf(xx, sub = paste0("Sample", i, "Sim", k))
+    pacf(xx, sub = paste0("Sample", i, "Sim", k))
+    par(mfrow=c(1,1))
+    #dev.print(device = png, file = paste0("autocorrelationFunction", "Sample", i, "Sim", k, ".png"),
+    #          width = 600)
+    
+    data_acf <- acf(xx, plot = FALSE, lag.max = (TT - 1))
+    sum_acf_ <- sum_acf_ + data_acf$acf
+    #Var()
+    #dev.print(device = png, file = paste0("Variogram", "Sample", i, "Sim", k, ".png"),
+    #          width = 600)
+  }
+}
+
+average[1:TT] <- sum[1:TT]/Nsamples
+average_acf <- sum_acf_/Nsamples
+
+average_acf_ <- data.frame(x_plot, average_acf)
+plot(average_acf_, ylim = c(-0.5, 1), type = "l", col = "red",
+     main = "correlogram", xlab = "lag", ylab = "sum of acf")
+#dev.print(device = png, file = paste0("average_acf_plot", ".png"), width = 600)
+
+par(mfrow=c(1,2))
+acf(average_acf)
+pacf(average_acf)
+#dev.print(device = png, file = paste0("average_acf+pacf", ".png"), width = 600)
+#dev.off()
+```
+
+

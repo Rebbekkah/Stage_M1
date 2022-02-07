@@ -1,0 +1,140 @@
+---
+title: "Randomization exercice"
+author: "Rebecca Goulancourt"
+output: pdf_document
+---
+
+```{r}
+path_Input <- "/Users/rgoulanc/Desktop/Series/InputData"
+setwd(path_Input)
+film <- NULL
+allfilms <- list.files(path = path_Input, ".txt", full.names = FALSE)
+for (i in 1:length(allfilms)) {
+  film <- read.table(allfilms[i], header = TRUE, sep = "\t", dec = ".")
+  cat(allfilms[i], "\n")
+  cat("number of columns : ", ncol(film), "\n")
+  cat("number of rows (points) : ", nrow(film), rep("\n", 2))
+  
+  if (ncol(film) < 2) {
+    cat(allfilms[i])
+    stop("not enought columns in the dataframe")
+  }
+  
+  if (length(allfilms) < 1) {
+    stop("no file to analyse")
+  }
+
+  viscosity <- film$viscosity..Pa.s.
+  time <- film$time.s..max.min.
+  df <- as.data.frame(cbind(viscosity, time))
+  
+  plot(df$time, df$viscosity, main = "viscosity as a function of time",
+       xlab = "time (s)", 
+       ylab = "viscosity",
+       sub = allfilms[i])
+  lines(df$time, df$viscosity, col = "red")
+  
+  # delta t and delta eta
+  delta_t <- NULL
+  delta_t <- df$time[1]
+  delta_t <- as.data.frame(c(delta_t, diff(df$time)))
+  #delta_t_last <- apply(delta_t, 2, sum) #last value of the deltat data frame
+  #delta_n <- NULL
+  #delta_n <- df$viscosity[1]
+  #delta_n <- as.data.frame(c(delta_n, diff(df$viscosity)))
+  
+  sum_t <- NULL
+  #sum_n <- NULL
+  for (i in 1:nrow(df)) {   
+    sum_t[i] <- unlist(sum(df[1:i, "time"]))
+    #sum_n[i] <- unlist(sum(df[1:i, "viscosity"]))
+  }
+
+  sum_t <- as.data.frame(sum_t)
+  #sum_n <- as.data.frame(sum_n)
+
+  delta_df <- cbind(df$viscosity, delta_t)
+  colnames(delta_df) <- c("viscosity", "delta_time")
+  
+  sum_dt <- NULL
+  for (i in 1:nrow(delta_df)) {  
+    sum_dt[i] <- unlist(sum(delta_df[1:i, "delta_time"]))
+  }
+  
+  sum_dt <- as.data.frame(sum_dt)
+  #sum_dn <- as.data.frame(sum_dn)
+  #sum_delta <- cbind(sum_dt, sum_n)
+  
+  #plot(sum_delta$sum_dt, sum_delta$sum_n, main = "delta eta as function of delta t",
+  #     xlab = "delta t",
+  #     ylab = "delta eta",
+  #     sub = allfilms[i])
+  #lines(sum_delta$sum_dt, sum_delta$sum_n)
+
+  
+  plot(delta_df$delta_time, delta_df$viscosity, main = "viscosity as a function of delta time",
+       xlab = "delta time",
+       ylab = "viscosity",
+       sub = allfilms[i]) 
+  lines(delta_df$delta_time, delta_df$viscosity)
+  
+  acf(delta_df$viscosity, sub = paste0(allfilms[i], " before rand"))
+  pacf(delta_df$viscosity, sub = paste0(allfilms[i], " before rand"))
+
+  #Randomiser# (à faire par paires de valeurs sur les deltat)
+  
+  line_sampled <- as.data.frame(sample(nrow(delta_df), nrow(delta_df), replace = FALSE))
+  
+  final_data <- NULL
+  for (i in 1:nrow(line_sampled)) {
+    for (j in 1:nrow(delta_df)) {
+      if (line_sampled[i,1] == rownames(delta_df[j,])) {
+        row <- delta_df[j,]
+        final_data <- rbind(final_data, row)
+      }
+    }
+  }
+  sum_dt <- NULL
+  for (i in 1:nrow(final_data)) {  
+    sum_dt[i] <- unlist(sum(final_data[1:i, "delta_time"]))
+  }
+  sum_dt <- as.data.frame(sum_dt)
+  
+  #break
+  
+  plot(sum_dt[,1], final_data$viscosity, type = "l", col = "blue")
+  lines(df$time, df$viscosity, col = "red")
+  
+  #stop() 
+  #plot(final_data$delta_time, final_data$viscosity, main = "viscosity as a function of time (sampled)",
+  #     xlab = "delta time (s)", 
+  #     ylab = "viscosity",
+  #     sub = allfilms[i])
+  #lines(final_data$delta_time, final_data$viscosity, col = "blue")
+
+  #plot(df$time, df$viscosity, main = "viscosity as a function of time",
+  #     xlab = "time (s)", 
+  #     ylab = "viscosity",
+  #     sub = allfilms[i])
+  #lines(, delta_df$viscosity, type = "l", col = "red")
+  
+  acf(final_data$viscosity, sub = paste0(allfilms[i], " after rand"))
+  pacf(final_data$viscosity, sub = paste0(allfilms[i], " after rand"))
+  
+  #if (i > 3) {
+  break
+  #}
+}
+```
+
+  line_sampled <- as.data.frame(sample(nrow(delta_df), nrow(delta_df), replace = FALSE))
+  df_ <- cbind(line_sampled, delta_df)
+  names(df_)[1] <- "line_sampled"
+  
+  final_data <- NULL
+  final_data <- df_[order(df_[,1], decreasing = FALSE),]
+  rownames(final_data) <- final_data[,1]
+  final_data <- final_data[,2:3]
+  
+  
+  

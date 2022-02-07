@@ -1,0 +1,364 @@
+---
+title: "Stage cdf"
+author: "Rebecca Goulancourt"
+date: "19/03/2021"
+output: pdf_document
+---
+
+# Étude des données sans sorting
+
+## Génération es données
+
+```{r}
+data <- rnorm(100, 0.5, 2)
+data <- as.matrix(data)
+```
+
+## calcul du cdf
+
+```{r}
+ecdf_data <- ecdf(data)
+s <-  rep(0, nrow(data))
+for (i in 1:nrow(data)) {
+  s[i] <- s[i] + ecdf_data(i) # vecteur contenant les cdf à chaque i 
+}
+```
+
+```{r}
+sc <- matrix(0, nrow = nrow(data), ncol = ncol(data), byrow = TRUE)
+for (i in 1:nrow(data)) {
+  sc[i] <- i/nrow(data) # matrice de la cdf
+}
+```
+
+## plot
+
+```{r}
+plot(density(data))
+legend("topleft", legend = "moyenne", lty = 1:2,  col = "red")
+```
+
+```{r}
+par(mfrow=c(2,2))
+plot(data)
+lines(data, col = "blue")
+plot(sc, log = "y")
+lines(sc, col = "blue")
+plot(s, log = "y")
+lines(s, col = "blue")
+par(mfrow=c(1,1))
+```
+
+```{r}
+mean <- mean(data)
+Y <- as.vector(sc)
+for (i in 1:length(Y)) {
+  if (Y[i] < mean) {
+    Y[i] <- Y[i]
+  }
+  else if (Y[i] >= mean) {
+    Y[i] <- 1 - Y[i]
+  }
+}
+```
+
+```{r}
+plot(Y, log ="y", main ="cdf", ylab = "log(cdf)", xlab = "x")
+lines(Y, col = "green")
+```
+
+# étude des données avec sorting (tri)
+
+```{r}
+data <- rnorm(100, 0.5, 2)
+data <- as.matrix(data)
+data_sort <- as.matrix(sort(data, decreasing = FALSE))
+```
+
+
+## calcul du cdf
+
+```{r}
+ecdf_data_sort <- ecdf(data_sort)
+s <-  rep(0, nrow(data_sort))
+for (i in 1:nrow(data_sort)) {
+  s[i] <- s[i] + ecdf_data_sort(i) # vecteur contenant les cdf à chaque i 
+}
+```
+
+
+```{r}
+sc <- matrix(0, nrow = nrow(data_sort), ncol = ncol(data_sort), byrow = TRUE)
+for (i in 1:nrow(data_sort)) {
+  sc[i] <- i/nrow(data_sort)
+}
+```
+
+## plot
+
+```{r}
+plot(density(data_sort))
+abline(v = mean, col = "red")
+legend("topleft", legend = "moyenne", lty = 1:2,  col = "red")
+```
+
+```{r}
+par(mfrow=c(1,2))
+plot(data_sort)
+abline(h = mean, col = "red")
+legend("topleft", legend = "moyenne", lty = 1:2,  col = "red")
+plot(sc, log = "y")
+abline(h = mean(sc), col = "red")
+legend("topleft", legend = "moyenne", lty = 1:2,  col = "red")
+par(mfrow=c(1,1))
+```
+
+```{r}
+mean <- mean(data_sort)
+Y <- as.vector(sc)
+for (i in 1:length(Y)) {
+  if (Y[i] < mean) {
+    Y[i] <- Y[i]
+  }
+  else if (Y[i] >= mean) {
+    Y[i] <- 1 - Y[i]
+  }
+}
+```
+
+Je récupère l'indice de la moyenne de sc
+```{r}
+for (i in 1:length(Y)) {
+  if (Y[i] >= mean) {
+    ind <- as.matrix(c(i, Y[i]))
+    break
+  }
+}
+indice <- ind[1,]
+value <- ind[2,]
+```
+
+```{r}
+plot(Y, log ="y", main ="cdf", ylab = "log(cdf)", xlab = "x")
+```
+
+
+
+### Plot des valeurs positives et négatives
+
+Je récupère et stocke chaque valeur positives et négatives
+```{r}
+neg <- rep(0, nrow(data))
+pos <- rep(0, nrow(data))
+for (i in 1:nrow(data)) {
+  if (data[i,] < 0) {
+    neg[i] <- data[i,]
+  }
+  else if (data[i,] > 0) {
+    pos[i] <- data[i,]
+  }
+}
+```
+
+Je transforme les vecteurs en matrice (cela peut être plus simple d'utilisation)
+```{r}
+neg <- as.matrix(neg)
+pos <- as.matrix(pos)
+```
+
+Je les combine dans une même matrice
+```{r}
+mat_neg_pos <- cbind(neg, pos) 
+colnames(mat_neg_pos) <- c("negativ", "positiv")
+```
+
+Je trie (sort) les valeurs par colonne et par ordre croissant
+```{r}
+mat_neg_pos_sort <- matrix(0, ncol = ncol(mat_neg_pos), nrow = nrow(mat_neg_pos))
+for (i in 1:ncol(mat_neg_pos)){
+  mat_neg_pos_sort[,i] <- sort(mat_neg_pos[,i], decreasing = FALSE)
+}
+colnames(mat_neg_pos_sort) <- c("negativ", "positiv")
+```
+
+
+ecdf_mat_neg_pos <- ecdf(mat_neg_pos)
+s_np <-  as.matrix(matrix(0, nrow(mat_neg_pos), ncol(mat_neg_pos)))
+for (i in 1:nrow(mat_neg_pos)) {
+  for (j in 1:ncol(mat_neg_pos)) {
+  s_np[i,j] <- s_np[i,j] + ecdf_mat_neg_pos(i) # matrice contenant les cdf à chaque i 
+  }
+}
+
+Plot sur les deux types de valeurs
+```{r}
+par(mfrow=c(1,2))
+plot(mat_neg_pos[,1], type = "l", col = "blue", ylim = c(-5,5),
+     main = "plot des valeurs pos et neg",
+     ylab = "valeurs",
+     xlab = "x")
+lines(mat_neg_pos[,2], type = "l", col = "red")
+legend("topleft", legend = c("positiv","negativ"), lty = 1:2,  col = c("red", "blue"))
+
+plot(mat_neg_pos_sort[,1], type = "l", col = "blue", ylim = c(-5,5),
+     main = "plot des valeurs pos et neg triées",
+     ylab = "valeurs",
+     xlab = "x")
+lines(mat_neg_pos_sort[,2], type = "l", col = "red")
+legend("topleft", legend = c("positiv","negativ"), lty = 1:2,  col = c("red", "blue"))
+par(mfrow=c(1,1))
+```
+
+
+Je ne m'occupe que des valeurs positives pour le moment
+```{r}
+pos <- as.matrix(sort(pos, decreasing = FALSE))
+ecdf_pos <- ecdf(pos)
+s_p <-  rep(0, nrow(pos))
+for (i in 1:nrow(pos)) {
+  s_p[i] <- s_p[i] + ecdf_pos(i) # vecteur contenant les cdf à chaque i 
+}
+```
+
+```{r}
+sc_p <- matrix(0, nrow = nrow(pos), ncol = ncol(pos), byrow = TRUE)
+for (i in 1:nrow(pos)) {
+  sc_p[i] <- i/nrow(pos)
+}
+```
+
+
+Le plot:
+```{r}
+mean <- mean(pos)
+Y <- as.vector(sc_p)
+for (i in 1:length(Y)) {
+  if (Y[i] >= mean) {
+    ind <- as.matrix(c(i, Y[i]))
+    break
+  }
+}
+indice <- ind[1,]
+value <- ind[2,]
+
+for (i in 1:length(Y)) {
+  if (Y[i] < mean) {
+    Y[i] <- Y[i]
+  }
+  else if (Y[i] >= mean) {
+    Y[i] <- 1 - Y[i]
+  }
+}
+Y_p <- Y
+plot(Y_p, log = "y", ylab = "sc_p", main = "cdf sur les valeurs positives")
+```
+
+Une autre manière de fairele graphe : en utilisant l'indice de la moyenne
+```{r}
+Y <- as.vector(sc_p)
+for (i in 1:length(Y)) {
+  if (i < indice) {
+    Y[i] <- Y[i]
+  }
+  else if (i >= indice) {
+    Y[i] <- 1 - Y[i]
+  }
+}
+Y_p <- Y
+plot(Y_p, log = "y", ylab = "sc_p", main = "cdf sur les valeurs positives")
+```
+--> On obtient 2 graphes différents la plupart du temps?
+
+
+Je fais exactement la même chose avec les valeurs négatives
+```{r}
+neg <- as.matrix(sort(neg, decreasing = FALSE))
+ecdf_neg <- ecdf(neg)
+s_n <-  rep(0, nrow(neg))
+for (i in 1:nrow(neg)) {
+  s_n[i] <- s_n[i] + ecdf_neg(i) # vecteur contenant les cdf à chaque i 
+}
+```
+Ici il y a une erreur : ecdf_neg(i) ne renvoie que 1 peut importe le i, donc le vecteur ne contiendra que des 1 ce qui est faux, sauf que je ne vois pas encore pourquoi j'ai ce résultat
+Heureusement cela ne change rien à la distribution cumulée que je calcule moi même ci-dessous
+
+
+
+```{r}
+sc_n <- matrix(0, nrow = nrow(neg), ncol = ncol(neg), byrow = TRUE)
+for (i in 1:nrow(neg)) {
+  sc_n[i] <- i/nrow(neg)
+}
+```
+
+
+Le plot:
+```{r}
+mean <- mean(neg)
+Y <- as.vector(sc_n)
+for (i in 1:length(Y)) {
+  if (Y[i] >= mean) {
+    ind <- as.matrix(c(i, Y[i]))
+    break
+  }
+}
+indice <- ind[1,]
+value <- ind[2,]
+
+for (i in 1:length(Y)) {
+  if (Y[i] < mean) {
+    Y[i] <- Y[i]
+  }
+  else if (Y[i] >= mean) {
+    Y[i] <- 1 - Y[i]
+  }
+}
+Y_n <- Y
+plot(Y_n, log = "y", ylab = "sc_n", main = "cdf sur les valeurs negatives")
+```
+
+
+Une autre manière de faire le graphe : en utilisant l'indice de la moyenne
+```{r}
+Y <- as.vector(sc_n)
+for (i in 1:length(Y)) {
+  if (i < indice) {
+    Y[i] <- Y[i]
+  }
+  else if (i >= indice) {
+    Y[i] <- 1 - Y[i]
+  }
+}
+Y_n <-  Y
+plot(Y, log = "y", ylab = "sc_n", main = "cdf sur les valeurs negatives")
+```
+
+plot superposé
+```{r}
+par(mfrow=c(1,2))
+#trié
+plot(neg, col = "blue", ylim = c(-5,5),
+     ylab = "values", xlab = "x", main = "plot valeurs pos et neg")
+lines(pos, type = "p", col = "red", sub = "trié")
+legend("topleft", legend = c("positiv","negativ"), lty = 1:2,  col = c("red", "blue"))
+
+#non trié
+plot(mat_neg_pos[,1], col = "blue", ylim = c(-5,5),
+     ylab = "values", xlab = "x", main = "plot valeurs pos et neg")
+lines(mat_neg_pos[,2], type = "p", col = "red", sub = "non trié")
+legend("topleft", legend = c("positiv","negativ"), lty = 1:2,  col = c("red", "blue"))
+par(mfrow=c(1,1))
+```
+
+## Plot des cdf sur les valeurs positifs et négatifs
+
+```{r}
+plot(Y_p, col = "red", ylab = "cdf", main = "cdf pos et neg", xlab = "x", log="y")
+lines(Y_n, type = "p", col = "blue")
+legend("center", legend = c("positiv","negativ"), lty = 1:2,  col = c("red", "blue"))
+```
+
+
+
+
+

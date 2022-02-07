@@ -1,0 +1,2844 @@
+---
+title: "Scrit for Data Analysis"
+author: "Claude Bostoen"
+output: pdf_document
+---
+
+
+line 1010 start of programm
+line 1100 start of loop for files (sink)
+line 1800 start of plotting summary data
+line 2200 end 
+Input reading of data, and analysis
+Model fitting and experimental variogram calculation of t-eta data (incl. theoretical variogram fit)
+
+line 1250: Column check change 4-5 
+period parameter in fit routines
+ 
+
+R intro: https://cran.r-project.org/doc/manuals/r-release/R-intro.html
+https://www.blopig.com/blog/2013/07/citing-r-packages-in-your-thesispaperassignments/
+interpretation of variograms/AR and RW models:
+https://www.sciencedirect.com/topics/earth-and-planetary-sciences/variogram
+https://www.slideshare.net/pablolopeznicolaz/basics1variogram
+https://a-little-book-of-r-for-time-series.readthedocs.io/en/latest/src/timeseries.html
+http://www.di.fc.ul.pt/~jpn/r/distributions/fitting.html
+https://support.minitab.com/en-us/minitab/18/help-and-how-to/modeling-statistics/time-series/how-to/partial-autocorrelation/interpret-the-results/partial-autocorrelation-function-pacf/
+https://people.duke.edu/~rnau/411arim3.htm#plots
+https://www.youtube.com/watch?v=-vSzKfqcTDg
+https://campus.datacamp.com/courses/introduction-to-time-series-analysis/autoregression?ex=5
+https://www.investopedia.com/articles/trading/07/stationary.asp
+Energy Transfer Dynamics: Studies and Essays in Honor of Herbert Fröhlich on ...
+geredigeerd door Terence William Barrett, Herber
+Variogram explanation: http://leg.ufpr.br/geoR/geoRdoc/geoRintro.html
+http://marcoagd.usuarios.rdc.puc-rio.br/revers.html
+
+load libraries and set working directory 
+for writing/reading excel files; non linear least squares fits; statistics data treatment
+
+# First Steps
+
+## loading the necessary libraries 
+
+```{r, include = FALSE}
+library(WriteXLS)
+library(readxl)
+library(minpack.lm)
+library(boot)
+library(stats)
+library(nlme)
+library(lme4)
+library(MASS)
+library(zoo)
+library(broom)
+library(tidyverse) 
+library(sjmisc)
+```
+
+## Files Directory 
+
+### Necessary paths
+
+```{r, include = FALSE}
+path_Input <- "/Users/rgoulanc/desktop/Series/InputData"
+path_OutputAll <- "/Users/rgoulanc/desktop/Series/OutputAll"
+path_generatedFiles <- "/Users/rgoulanc/desktop/Series/OutputAll/GeneratedFiles/"
+path_Screenplots <- "/Users/rgoulanc/Desktop/Series/OutputAll/ScreenPlotsRstudio"
+path_Results <- "/Users/rgoulanc/Desktop/Series/Plos4Pub/Results"
+path_DataAnalysisMethod <- "/Users/rgoulanc/Desktop/Series/Plos4Pub/DataAnalysisMethod"
+path_Dataprep <- "/Users/rgoulanc/Desktop/Series/Plos4Pub/DataAnalysisMethod/Dataprep"
+```
+
+```{r, include = FALSE}
+setwd(path_generatedFiles)
+```
+
+## Functions
+
+Small functions that will be used in others
+
+```{r, include = FALSE}
+mykurtosis = function(x) {  
+  mean_x <- mean(x, na.rm = TRUE)
+  sd_x <- sd(x, na.rm = TRUE)
+  (mean((x-mean_x)^4)/(sd_x^4))-3 
+}
+
+myskewness = function(x) {
+  mean_x <- mean(x, na.rm=TRUE)
+  sd_x <- sd(x, na.rm = TRUE)
+  mean((x-mean_x)^3)/(sd_x^3)
+}
+
+Format = function(number) {
+  sprintf("%3.6f", number)
+}
+
+Cauchy = function(x, meancauchy, scalecauchy) {
+  1/2-atan((x-meancauchy)/scalecauchy)/pi
+}
+
+t_general = function(x, mu, sigma, nu) {
+  1/sigma*gamma((nu+1)/2)/sqrt(nu*pi)/
+    gamma(nu/2)*(1+((x-mu)^2)/nu/sigma/sigma)^(-(1+nu)/2)
+}
+
+Modelhole_all = function(FIT) {
+  if (FIT == 0) {
+    Modelhole = function(fitlag, C0_constant_cosinus, C1_T, C2_constant_GRW, C3_GRW) {
+      C0_constant_cosinus*(1-cos(2*pi*averagetime*fitlag/C1_T)) +
+        2*C2_constant_GRW*(1-C3_GRW^fitlag)/(1-C3_GRW^2)
+    }
+  }
+  else if (FIT == 1) {
+    Modelhole = function(fitlag, C0_constant_cosinus, C1_T, C2_constant_OU, C3_correlationtime) {
+      C0_constant_cosinus*(1-cos(2*pi*averagetime*fitlag/C1_T)) + 
+        C2_constant_OU*(C3_correlationtime/averagetime)*(1-exp(-fitlag*averagetime/C3_correlationtime))
+    }
+  }
+  else if (FIT == 2) {
+    Modelhole = function(fitlag, C0_constant_GRW, C1_GRW) {
+      2*C0_constant_GRW*(1-C1_GRW^fitlag)/(1-C1_GRW^2) 
+    }
+  }
+  else if (FIT == 3) {
+    Modelhole = function(fitlag, C0_constant_OUP, C1_correlationtime) {
+      C0_constant_OUP*(C1_correlationtime/averagetime)*(1-exp(-fitlag*averagetime/C1_correlationtime))
+    }
+  }
+  else if (FIT == 4) {
+    Modelhole = function(fitlag, C0, C1, C2) {
+      C0+C1*(1-cos(C2*fitlag))
+    }
+  }
+  else if (FIT == 5) {
+    Modelhole = function(fitlag,C0) {
+      C0 + 0*fitlag
+    }
+  }
+}
+
+Modeleta = function(t, trend, cte) {
+  t*trend + cte 
+}
+
+Model_acf = function(lag_acf, tau) {
+  exp(-lag_acf/tau)
+}
+
+mean_log_eta = function(t, meaneta) {
+  t*0 + meaneta
+}
+
+Model_sigma_eta = function(freq, power, cte) {
+  cte*(freq)^power
+}
+
+Model_tau = function(freq, cte, power) {
+  cte*(freq)^(power)
+}
+
+Model_ln_eta = function(Film_frequencies, cte, power) {
+  cte*(Film_frequencies)^(power)
+}
+
+Model_powerlaw = function(x, C0_Vcloud_constant, C1_Vcloud_exponent) {
+  C0_Vcloud_constant*x^C1_Vcloud_exponent
+}
+
+Variogram_theoretical <- function(film, Dimdata, averagetime, range_fraction, simulation, Fit, Variogram_fit) {
+  range <- range_fraction
+  if(range_fraction < 1) {
+    range <- range_fraction * (Dimdata - 1)
+    }
+    setwd(path_generatedFiles)
+    variogram_data <-  read_xlsx(paste(film, "variogram.xlsx", sep = ""), 
+                                 n_max = (Dimdata-1), col_names = TRUE)
+    explag <- unlist((variogram_data[, 1]))
+    variogram <- unlist(variogram_data[, 2])
+
+  fitlag <- head(explag, range)
+  fitvariogram <- head(variogram, range)
+  
+  if(max(fitvariogram) < mean(fitvariogram) + sd(fitvariogram)) {
+    FIT <- FIT + 1
+  }
+  
+  ymin <- 0.9 * min(fitvariogram)
+  ymax <- 1.1 * max(fitvariogram)
+  xlab <- expression(italic(Lag ~ l))
+  ylab <- expression(italic(Variogram))
+  plot(fitlag, fitvariogram, xlab = xlab, ylab = "", type = "l",
+       ylim = c(0, ymax), xlim = c(0, range), cex.lab = 1.5)
+  title(ylab = ylab, line = 2.5, cex.lab = 1.5)
+  pos_line <- 1
+  
+  if(simulation == "yes") {
+    setwd(path_generatedFiles)
+    WriteXLS(df, paste(amplitude, nu, trend, "simulationvariogram.xlsx", sep = ""), SheetNames = "variogram")
+    mtext(cex = 0.75, paste0("amplitude = ", amplitude, ", period = ", round(1/nu, 1),
+                             " s, trend =  ", round(trend, 1)), 3, 0)
+    pos_line <- 0
+  }
+  fit_general(film, fitlag, fitvariogram, averagetime, FIT, pos_line)
+}
+
+Variogram_experimental <- function(film, log_eta, Dimdata, simulation) {
+  deltaetasq <- NULL
+  plotlag <- NULL
+  plotdeltaetasq <- NULL
+  
+  for (i in 1:Dimdata) {
+    deltaetasq[i] <- 0
+  }
+  explag <- NULL
+  variogram <- NULL
+  variogramerror <- NULL
+  
+  for (lag in 1:(Dimdata - 1)) {
+    Sumn <- 0
+    for (i in 1:Dimdata) {
+      if (i + lag > Dimdata) {
+        variogramlag <- Sumn/(Dimdata - lag)
+        if(FALSE) {
+          somerror <- 0
+          for (ierror in 1:(Dimdata-lag)) {
+            somerror <- somerror + (deltaetasq[ierror]/2-variogram)^2
+          }
+          variogramerror <- sqrt(somerror/(Dimdata-lag))
+          variogramerror <- c(variogramerror, variogramerror)
+        }
+      } 
+      else {
+        deltai <- log_eta[i] - log_eta[i+lag]
+        deltaetasq[i] <- deltai * deltai
+        Sumn <- Sumn + deltaetasq[i]
+      }
+    }
+    
+    if(lag == 1) {
+      r <- hist(deltaetasq/2, breaks = Dimdata - lag, plot = FALSE)
+      x <- r$breaks[-1]
+      y <- r$counts 
+      
+      powerlaw_fit <- nlsLM(y ~ Model_powerlaw(x, C0_Vcloud_constant, C1_Vcloud_exponent),
+                            start = list(C0_Vcloud_constant = 10, C1_Vcloud_exponent = -1))
+      
+      if(FALSE) {
+        plot(x, y, cex.lab = 1.5, xlab = "variogram terms", ylab = "frequency", log = 'xy', type = 'p')
+        x <- (1:300)/1000
+        C0_Vcloud_constant <- coef(powerlaw_fit)[1]
+        C1_Vcloud_exponent <- coef(powerlaw_fit)[2]
+        lines(x, Model_powerlaw(x, C0_Vcloud_constant, C1_Vcloud_exponent), col = "red")
+        mtext(cex = 0.75, paste0("cte = ", round(C0_Vcloud_constant, 3),
+                                 " power = ", round(C1_Vcloud_exponent, 3)), 3, 0.5)
+      }
+    }
+    explag <- c(explag, lag)
+    variogram <- c(variogram, variogramlag)
+  }
+  
+  alfa <- variogram[2]/variogram[1] - 1
+  sigma_sigma_alfa <- variogram[2]/2
+
+  epsilon <- log(1/alfa)
+  sigma_sigma_epsilon <- epsilon*variogram[1]/(1-alfa)
+
+  dfvar <- data.frame(explag, variogram)
+
+  file = paste(film, "_variogram.txt", sep = "")
+  write.table(format(dfvar, digits = 3), file = file, na = "", quote = FALSE, sep = " ",
+              col.names = TRUE, row.names = FALSE)
+  
+  dflag12 <- data.frame(alfa, sigma_sigma_alfa, epsilon, sigma_sigma_epsilon)
+
+  setwd(path_generatedFiles)
+  WriteXLS(dfvar, paste(film, "variogram.xlsx", sep = ""))
+  WriteXLS(dflag12, paste(film, "variogram_lag12.xlsx", sep = ""))
+}
+```
+
+### Distribution function
+
+```{r, include = FALSE}
+Distribution_check = function(eta, lognormal) { 
+
+  deltaeta <- eta
+  meanlog <- 0
+  
+  if(lognormal == "true") { 
+    lognorm <- fitdistr(eta, "log-normal") 
+    meanlog <- coef(lognorm)[1]
+    sdlog <- coef(lognorm)[2]
+    median <- meanlog - sdlog*sdlog/2
+    mode <- meanlog - (3*sdlog)^2/2
+    etaecdf <- exp(meanlog)
+    etaecdfhb <- exp(meanlog + sdlog)
+    etaecdflb <- exp(meanlog - sdlog)
+  
+    ecdf_plot <- ecdf(eta)
+    min <- min(eta)
+    max <- max(eta)
+    plot(ecdf_plot, log = "x", 
+         xlim = c(min, max), 
+         xlab = "eta", 
+         cex.lab = 1.5)
+    
+    ecdf_rl <- ecdf(rlnorm(Dimdata, meanlog, sdlog))
+    plot(ecdf_rl, cex.lab = 1.5, 
+         col = "red", 
+         add = TRUE, 
+         do.points = FALSE)
+    
+    mtext(paste0("eta lognormal", round(etaecdf, 1), " hb ", round(etaecdfhb, 1), "lb", 
+                    round(etaecdflb, 1), 3, 0.5))
+    deltaeta <- diff(eta) 
+  }
+
+  cauchy <- fitdistr(deltaeta,"cauchy") 
+  meancauchy <- coef(cauchy)[1]
+  scalecauchy <- coef(cauchy)[2]
+  mean <- round(meancauchy, 2)
+  fwhm <- 2*(round(scalecauchy, 2))  
+  
+  normal <- fitdistr(deltaeta,"normal")
+  meannormal <- coef(normal)[1]
+  sdnormal <- coef(normal)[2]
+  
+   if(lognormal == "false") {
+    mean <- round(meannormal, 2)
+    sd <- round(sdnormal, 2)
+  }
+ 
+  delta_eta <- deltaeta - meannormal
+  delta_eta <- sort(deltaeta, na.last = NA) 
+  
+  kurtosis <- mykurtosis(delta_eta)
+  skewness <- myskewness(delta_eta)
+  
+  
+  upper <- c(1, 40, 50)
+  if(film=="film9"){
+    lower <- c(-1,0.01,8)
+  } 
+  else {
+    lower <- c(-1, 0.01, 1)
+  }
+  starting_list <- list(m = mean(delta_eta), s = sd(delta_eta), df = 3)
+  Param <- fitdistr(delta_eta, "t", start = starting_list, lower = lower)
+  
+  
+  tm <- coef(Param)[1]
+  ts <- coef(Param)[2]
+  tdf <- coef(Param)[3]
+  
+  
+  deltaeta_neg <- sort(abs(delta_eta[delta_eta < 0]))
+  deltaeta_pos <- sort(delta_eta[delta_eta >= 0])
+  
+  count_neg <- length(deltaeta_neg)
+  count_pos <- length(deltaeta_pos)
+  count <- count_neg + count_pos
+  
+  xneg_exp <- (count_neg:1)/count 
+  xpos_exp <- (count_pos:1)/count
+  
+  ylim <- c(1/(2*count), 1)
+  xlim_max <- max(deltaeta_neg, deltaeta_pos)
+  xlim_min <- min(deltaeta_neg, deltaeta_pos)
+  xlim <- c(xlim_min, xlim_max)
+  
+  if(lognormal == "false") { 
+    ylim <- c(1/(2*count), 1)
+    
+    if(max(deltaeta_pos) > 10) {
+      xlab = "delta T"
+    } 
+    else {
+      xlab = expression(paste("|", Delta, "", eta, "| / ", sigma, "(", Delta,"", eta, ")"))
+      xlab = "delta T/sigma(T)"
+    }
+    
+    plot(deltaeta_neg, xneg_exp, cex.lab = 1.5,
+         pch = 20, col = "red", log = "y", 
+         ylim = ylim, xlim = xlim, 
+         xlab = xlab, ylab = "CDF")
+  }
+  else {
+      plot(deltaeta_neg, xneg_exp, cex.lab = 1.5, cex = 0.75,
+           log = "y", ylab = "CDF", xlim = xlim, ylim = ylim,
+           pch = 20, col = "red",
+           xlab = expression(paste("|", Delta, "", eta, "|   (Pa.s)"))) 
+  }
+  
+points(deltaeta_pos, xpos_exp, pch = 20)
+ 
+  if(lognormal == "true") {
+    setwd(path_generatedFiles)
+    delta_eta_scaling <- delta_eta/sd(delta_eta)
+    dfscalingdeltaeta <- data.frame(delta_eta_scaling)
+    
+    WriteXLS(dfscalingdeltaeta, paste(film, "Scalingdeltaeta.xlsx", sep=""), SheetNames = "scalinglaw")
+    
+    tdistribution_fits <- data.frame(film, Format(tm), 
+                                     Format(ts), Format(tdf), 
+                                     Format(skewness), Format(kurtosis))
+    print(film)
+    
+    if(film == "film10") {
+      write.table(tdistribution_fits, paste("tdistribution_fits.txt", sep = ""), 
+                  col.names = TRUE, append = TRUE)
+    }
+    else {
+      write.table(tdistribution_fits, paste("tdistribution_fits.txt", sep = "", 
+                                            col.names = FALSE, append = TRUE))
+      }
+  }
+
+  lorentz <-  NULL
+
+  lines(deltaeta_neg, Cauchy(deltaeta_neg, 0, scalecauchy), lwd = 2, col = "green")
+  
+  y <- (1:count)/count
+  sd_deltaeta <- sd(delta_eta)
+  
+  deltaeta_gauss <- qnorm(y, 0, sd_deltaeta)
+  deltaeta_gauss_neg <- abs(deltaeta_gauss[deltaeta_gauss < 0])
+  negcdf <- y[deltaeta_gauss < 0]
+  deltaeta_gauss_pos <- deltaeta_gauss[deltaeta_gauss >= 0]
+  poscdf <- 1 - y[deltaeta_gauss >= 0]
+  
+  count_gauss_neg <- length(deltaeta_gauss_neg)
+  count_gauss_pos <- length(deltaeta_gauss_pos)
+  
+  lines(deltaeta_gauss_neg, negcdf, lwd = 2, col = 'blue')
+
+  min_eta <- min(delta_eta)
+  max_eta <- max(delta_eta)
+  
+  if(abs(min_eta) > max_eta) {
+    max_eta <- abs(min_eta)
+  }
+  else {
+    min_eta <- -max_eta
+  }
+  
+  DELTA <- max_eta - min_eta
+  deltaeta_tstudent <- NULL
+  cfdt <- NULL
+  tdist <- NULL
+  
+  cfdt[1] <- t_general(min_eta, tm, ts, tdf)
+  tdist[1] <- cfdt[1]
+  deltaeta_tstudent[1] <- min_eta
+  
+  for(i in 2:count) {
+    deltaeta_tstudent[i] <- min_eta + (i-1) * DELTA/count
+    if(abs(deltaeta_tstudent[i]) < 0.0001) {
+      deltaeta_tstudent[i] <- 0.0001
+    }
+    
+    tdist[i] <- t_general(deltaeta_tstudent[i], tm, ts, tdf)
+    cfdt[i] <- cfdt[i-1] + t_general(deltaeta_tstudent[i], tm, ts, tdf)
+  
+    }
+  
+  cfdt <- cfdt/cfdt[count]
+  deltaeta_tstudent_neg <- abs(deltaeta_tstudent[deltaeta_tstudent < 0])
+  negcdft <- cfdt[deltaeta_tstudent < 0]
+  deltaeta_tstudent_pos <- deltaeta_tstudent[deltaeta_tstudent >= 0]
+  poscdft <- 1 - cfdt[deltaeta_tstudent >= 0]
+  
+  count_tstudent_neg <- length(deltaeta_tstudent_neg)
+  count_tstudent_pos <- length(deltaeta_tstudent_pos)
+
+  lines(deltaeta_tstudent_neg, negcdft, lwd = 2, lty = 2, col = 'red')
+  lines(deltaeta_tstudent_pos, poscdft, lwd = 2)
+  mtext(cex = 0.75, paste("df = ", round(tdf, 2), "  scale = ", round(ts, 2)), 3, 2)
+  mtext(cex = 0.75, paste("Skewn = ", round(skewness, 2), "  Kurt = ", round(kurtosis, 2)), 3, 1)
+
+  
+  if(film == "film9" | film == "film15" | film == "film10" | film == "film21") {
+    
+    delta_eta_all <- c(deltaeta_neg, deltaeta_pos, deltaeta_gauss_neg, 
+                       deltaeta_gauss_pos, deltaeta_tstudent_neg, deltaeta_tstudent_pos)
+    
+    ecdf_exp_neg <- c(xneg_exp, rep(NA,(count_pos + 2*count)))
+    ecdf_exp_pos <- c(rep(NA, (count_neg)), xpos_exp, rep(NA, 2*count))
+    
+    ecdf_cauchy_neg <- c(Cauchy(deltaeta_neg, 0, scalecauchy), rep(NA,(count_pos + 2*count)))
+    ecdf_cauchy_pos <- c(rep(NA,count_neg), Cauchy(deltaeta_pos, 0, scalecauchy), rep(NA, 2*count))
+    
+    ecdf_gauss_neg <- c(rep(NA, count), negcdf, rep(NA, count_gauss_pos + count))
+    ecdf_gauss_pos <- c(rep(NA, count + count_gauss_neg), poscdf, rep(NA, count))
+    
+    ecdf_tstudent_neg <- c(rep(NA, 2*count), negcdft, rep(NA, count_tstudent_pos))
+    ecdf_tstudent_pos <- c(rep(NA, 2*count + count_tstudent_neg), poscdft)
+
+    df_cdf_delta_eta <- data.frame(Format(delta_eta_all),
+                                  Format(ecdf_exp_neg),
+                                  Format(ecdf_exp_pos),
+                                  Format(ecdf_cauchy_neg),
+                                  Format(ecdf_cauchy_pos),
+                                  Format(ecdf_gauss_neg),
+                                  Format(ecdf_gauss_pos),
+                                  Format(ecdf_tstudent_neg),
+                                  Format(ecdf_tstudent_pos))
+    
+    
+    setwd(path_Dataprep)
+    
+    write.table(df_cdf_delta_eta, file = paste(film, "plot_cdf_delta_eta.txt", sep = ""), 
+                quote = FALSE, na = "", sep = " ", col.names = TRUE, row.names = FALSE, dec = ".")
+
+    setwd(path_Results)
+    
+    if(film == "film9") {
+      write.table(df_cdf_delta_eta, file = paste(film, "plot_cdf_delta_eta.txt", sep = ""),
+                quote = FALSE, na = "", sep = " ", col.names = TRUE, row.names = FALSE, dec = ".")      
+    }
+    
+    if(film == "film21") {
+      write.table(df_cdf_delta_eta, file = paste(film, "plot_cdf_delta_eta.txt", sep = ""),
+                quote = FALSE, na = "", sep = " ", col.names = TRUE, row.names = FALSE, dec = ".")      
+    }
+
+    delta_eta_scaled <- delta_eta_all/sd(delta_eta)
+    df_cdf_delta_eta_scaling <- data.frame(Format(delta_eta_scaled),
+                                             Format(ecdf_exp_neg), Format(ecdf_exp_pos),
+                                             Format(ecdf_cauchy_neg), Format(ecdf_cauchy_pos),
+                                             Format(ecdf_gauss_neg), Format(ecdf_gauss_pos),
+                                             Format(ecdf_tstudent_neg), Format(ecdf_tstudent_pos))
+    
+    
+    setwd(path_generatedFiles)
+    write.table(df_cdf_delta_eta_scaling, file = paste(film, "plot_correct_scaling.txt", sep = ""),
+                quote = FALSE, na = "", sep = " ", col.names = TRUE, row.names = FALSE, dec = ".")
+    
+  }
+  
+  if(lognormal == "false") {
+    delta_eta_vs_eta <- c(deltaeta_neg, deltaeta_pos, deltaeta_gauss_neg,
+                          deltaeta_gauss_pos, deltaeta_tstudent_neg, deltaeta_tstudent_pos)
+    
+    ecdf_exp_neg <- c(xneg_exp, rep(NA, (count_pos + 2*count)))
+    ecdf_exp_pos <- c(rep(NA, (count_neg)), xpos_exp, rep(NA, 2*count))
+    
+    ecdf_cauchy_neg <- c(Cauchy(deltaeta_neg, 0, scalecauchy), rep(NA, (count_pos + 2*count)))
+    ecdf_cauchy_pos <- c(rep(NA, count_neg), Cauchy(deltaeta_pos, 0, scalecauchy), rep(NA, 2*count))
+    
+    ecdf_gauss_neg <- c(rep(NA, count), negcdf, rep(NA, count_gauss_pos + count))
+    ecdf_gauss_pos <- c(rep(NA, count + count_gauss_neg), poscdf, rep(NA, count))
+    
+    ecdf_tstudent_neg <- c(rep(NA, 2*count), negcdft, rep(NA, count_tstudent_pos))
+    ecdf_tstudent_pos <- c(rep(NA, 2*count + count_tstudent_neg), poscdft)
+    
+    df_mastercurve_delta_eta <- data.frame(Format(delta_eta_vs_eta),
+                                          Format(ecdf_exp_neg), Format(ecdf_exp_pos),
+                                          Format(ecdf_cauchy_neg), Format(ecdf_cauchy_pos),
+                                          Format(ecdf_gauss_neg), Format(ecdf_gauss_pos),
+                                          Format(ecdf_tstudent_neg), Format(ecdf_tstudent_pos))
+    
+    setwd(path_Results)
+    write.table(df_mastercurve_delta_eta, file = "plot_mastercurve_delta_eta_scaled.txt", 
+                quote = FALSE, na = "", sep = " ", col.names = TRUE, row.names = FALSE, dec = ".")
+  }
+}
+```
+
+
+### Scaling delta eta function 
+
+```{r, include = FALSE}
+Scalingdelta_aeta = function() {
+
+  setwd(path_generatedFiles)
+  
+  if(FALSE) {
+    File <-  c("film10Scalingdeltaeta.xlsx",
+           "film15Scalingdeltaeta.xlsx",
+           "film21Scalingdeltaeta.xlsx" )
+  }
+  
+  if(TRUE) {
+    File <-  c("film1Scalingdeltaeta.xlsx", 
+           "film8Scalingdeltaeta.xlsx",
+           "film9Scalingdeltaeta.xlsx",
+           "film10Scalingdeltaeta.xlsx", 
+           "film11Scalingdeltaeta.xlsx",
+           "film12Scalingdeltaeta.xlsx",
+           "film13Scalingdeltaeta.xlsx", 
+           "film14Scalingdeltaeta.xlsx",
+           "film15Scalingdeltaeta.xlsx",
+           "film17Scalingdeltaeta.xlsx", 
+           "film18Scalingdeltaeta.xlsx",
+           "film19Scalingdeltaeta.xlsx",
+           "film20Scalingdeltaeta.xlsx", 
+           "film21Scalingdeltaeta.xlsx" )
+  }
+  
+  if(FALSE) {
+    File <-  c( "SheetScalingdeltaeta.xlsx")
+  }
+  
+  if(FALSE) {
+    File <-  c( "film12Scalingdeltaeta.xlsx",
+            "film13Scalingdeltaeta.xlsx",
+            "film17Scalingdeltaeta.xlsx")
+  }
+  
+  if(FALSE) {
+    File <-  c( "film10Scalingdeltaeta.xlsx", 
+            "film12Scalingdeltaeta.xlsx",
+            "film13Scalingdeltaeta.xlsx",
+            "film14Scalingdeltaeta.xlsx", 
+            "film16Scalingdeltaeta.xlsx",
+            "film17Scalingdeltaeta.xlsx", 
+            "film2Scalingdeltaeta.xlsx",
+            "film9Scalingdeltaeta.xlsx" )
+  }    
+  
+  
+  dim <- length(File)
+  combined_deltaeta <- NULL
+  for (i_delta_eta in 1:dim) {
+    delta_eta = read_xlsx(File[i_delta_eta], "scalinglaw")
+    
+    for (i in 1:1000) {
+      if (is.na(delta_eta[i, 1])) {
+        Dimdata = i-1    
+        break
+      }
+    }  
+    
+    deltaeta <- head(unlist((delta_eta[,1])), Dimdata)
+    combined_deltaeta <- c(combined_deltaeta, deltaeta)
+    
+  }
+  
+  df <- data.frame(combined_deltaeta)
+ 
+  if(FALSE) {
+    WriteXLS(df, "ScalingLawDeltaEta", SheetNames = "Alldata")
+  }
+  else {
+    WriteXLS(df, "ScalingLawDeltaEta", SheetNames = "Alldata")
+  }
+  
+  lognormal <- "false"
+  count <- length(combined_deltaeta)
+  
+  Distribution_check(combined_deltaeta, lognormal)
+
+  setwd(path_Results)
+  
+  if(TRUE) {
+    scaling_nu8 <- read.table(paste("film9", "plot_cdf_delta_eta.txt", sep = ""), header = TRUE)
+    scaling_nu80 <- read.table(paste("film21", "plot_cdf_delta_eta.txt", sep = ""), header = TRUE)
+  }
+  else if(FALSE) {
+    scaling_nu8 <- read.table(paste("film10", "plot_cdf_delta_eta.txt", sep = ""), header = TRUE)
+    scaling_nu80 <- read.table(paste("film17", "plot_cdf_delta_eta.txt", sep = ""), header = TRUE)
+  }
+  
+  deltaeta_ecdfneg8 <- subset(scaling_nu8[, c(1,2)], 
+                              (!is.na(scaling_nu8[, 1]) & !is.na(scaling_nu8[, 2])))
+  deltaeta_ecdfpos8 <- subset(scaling_nu8[, c(1,3)],
+                              (!is.na(scaling_nu8[, 1]) & !is.na(scaling_nu8[, 3])))
+  
+  deltaeta_tdfneg8 <- subset(scaling_nu8[, c(1,8)],
+                             (!is.na(scaling_nu8[,1]) & !is.na(scaling_nu8[,8])))
+  deltaeta_tdfpos8 <- subset(scaling_nu8[, c(1,9)],
+                             (!is.na(scaling_nu8[,1]) & !is.na(scaling_nu8[,9])))
+  
+  deltaeta_ecdfneg80 <- subset(scaling_nu80[, c(1,2)],
+                               (!is.na(scaling_nu80[,1]) & !is.na(scaling_nu80[,2])))
+  deltaeta_ecdfpos80 <- subset(scaling_nu80[, c(1,3)],
+                               (!is.na(scaling_nu80[,1]) & !is.na(scaling_nu80[,3])))
+  
+  deltaeta_tdfneg80 <- subset(scaling_nu80[, c(1,8)], 
+                              (!is.na(scaling_nu80[,1]) & !is.na(scaling_nu80[,8])))
+  deltaeta_tdfpos80 <- subset(scaling_nu80[, c(1,9)],
+                              (!is.na(scaling_nu80[,1]) & !is.na(scaling_nu80[,9])))
+  
+  
+  xmax <- max(deltaeta_ecdfpos80, deltaeta_ecdfneg80, deltaeta_tdfpos80,
+           deltaeta_ecdfpos8, deltaeta_ecdfneg8, deltaeta_tdfpos8)
+  
+  logmax <- 10^(trunc(log10(xmax)) + 1)
+  linmax <- (logmax/10)*(trunc(xmax/(logmax/10))+1)
+  
+  ylim <- c(1/(2*count), 1)
+  xlim <- c(0.0001, logmax)
+  ylab <- "CDF"
+  xlab <- expression(paste("|", Delta,"", eta,"|   (Pa.s)"))
+  
+  plot(deltaeta_ecdfneg80, cex.lab = 1.5, col = "red", 
+       log = "xy", 
+       ylim = ylim, 
+       xlim = xlim, 
+       ylab = "CDF", xlab = xlab)
+  points(deltaeta_ecdfpos80, pch = 20, cex = 0.5)
+  points(deltaeta_ecdfneg8, pch = 20, col = "red")
+  points(deltaeta_ecdfpos8)
+  lines(deltaeta_tdfpos80, lty=3)
+  lines(deltaeta_tdfpos8, lty=3)
+  legend("bottomleft", cex = 1,
+         c(expression(paste("Negative, ", omega,"= 5.3 ", rad.s^-1)),
+           expression(paste("Positive")),
+           expression(paste("Negative, ", omega, "= 0.55 ", rad.s^-1)),
+           expression(paste("Positive"))),
+         pch = c(1,20,20,1),
+         col = c("red", "black", "red", "black"))
+
+  
+  plot(deltaeta_ecdfneg80, cex.lab = 1.5, col = "red", log = "y", 
+       ylim = ylim, 
+       xlim = c(0, linmax),
+       ylab = ylab,
+       xlab = xlab)
+  points(deltaeta_ecdfpos80, pch = 20, cex = 0.5)
+  points(deltaeta_ecdfneg8, pch = 20, col = "red")
+  points(deltaeta_ecdfpos8)
+  lines(deltaeta_tdfpos80, lty = 3)
+  lines(deltaeta_tdfpos8, lty = 3)
+
+  if(TRUE) {
+    films <- c("film10", "film15", "film21")
+    nus <- c(0.65, 1.3, 5.3) 
+  }
+  else if (FALSE) {
+    films <- c("film12", "film13", "film17")
+    nus <- c(0.76, 0.94, 5.7)
+  }
+
+  setwd(path_generatedFiles)
+  
+  all_scaled_datax <- NULL
+  all_scaled_datay <- NULL
+  plot_datax <- NULL
+  plotfile <- FALSE
+  
+  if(plotfile) {
+    plot_index <- list()
+    for (i in 1:(length(films)*2)) {
+      plot_index[i] <- NULL
+    }
+    cdf_ <- NULL
+  }
+  
+  for (i in 1:length(films)) {
+    file <- paste(films[i], "plot_correct_scaling.txt", sep = "")
+    correct_scaling <- read.table(file = file, header = TRUE)
+    
+    nr <- 2*i-1
+    cdf <- subset(correct_scaling[, c(1,2)],
+                  (!is.na(correct_scaling[,1]) & !is.na(correct_scaling[,2])))
+    cdf_neg <- -cdf[,1]
+    
+    all_scaled_datax <- cdf_neg
+    plot_datax <- cdf[,1]
+
+    if(nr == 1) {
+      plot(cdf, cex.lab = 1.5, log = "y", type = "p", pch = 1, col = "red", cex = 2/nr,
+                   ylim = c(0.001, 1),
+                   xlim = c(0.0001, 10),
+                   ylab = "CDF",
+                   xlab = expression(paste("|", Delta,"", eta,"| / ", 
+                                           sigma,"(", Delta,"", eta,")")))
+    }
+    else {
+      points(cdf, col = "red", pch = 1, cex = 2/nr)
+    }
+    
+    if(plotfile) {
+      plot_index[[nr]] <- c(plot_index[[nr]], cdf[,2])
+      
+      for (index in (nr+1):8) {
+        plot_index[[i]] <- c(plot_index[[index]], rep(NA, length(cdf_neg)))
+      }
+      
+      if(nr > 1) {
+        for (index in 1:(nr-1)) {
+          plot_index[[index]] <- c(plot_index[[index]], rep(NA,length(cdf_neg)))
+        }
+      }
+    }
+    
+
+    nr <- 2*i
+    cdf <- subset(correct_scaling[,c(1,3)],(!is.na(correct_scaling[,1]) & !is.na(correct_scaling[,3])))
+    cdf_ <- cdf[,1]
+    all_scaled_datax <- c(all_scaled_datax, cdf_)
+   
+    plot_datax <- c(plot_datax, cdf[,1])
+    points(cdf, col = "black", pch = 1, cex = 2/(nr-1))
+    
+    if(plotfile) {
+      plot_index[[nr]] <- c(plot_index[[nr]],cdf[,3])
+      
+      for (index in 1:(nr-1)) {
+        plot_index[[index]] <- c(plot_index[[index]], rep(NA, length(cdf_)))
+      }
+      
+      for (index in (nr+1):8) {
+        plot_index[[index]] <- c(plot_index[[index]], rep(NA, length(cdf_)))
+      }
+    }
+  }
+  
+  Param <- fitdistr(all_scaled_datax, "t", 
+                    start = list(m = mean(all_scaled_datax),
+                                 s = sd(all_scaled_datax), df = 3), 
+                    lower = c(-0.05, 0.5, 1), 
+                    upper = c(0.05, 50, 50))
+  tm  <- coef(Param)[1]
+  ts  <- coef(Param)[2]
+  tdf <- coef(Param)[3]
+
+  delta_eta <- all_scaled_datax
+  count <- length(delta_eta)
+  min_eta <- min(delta_eta)
+  max_eta <- max(delta_eta)
+  
+  if(abs(min_eta)>max_eta) {
+    max_eta <- abs(min_eta)
+  }
+  else {
+    min_eta <- -max_eta
+  }
+  
+  DELTA <- max_eta - min_eta
+  deltaeta_tstudent <- NULL
+  cdft <- NULL
+  tdist <- NULL
+
+  cdft[1] <- t_general(min_eta, tm, ts, tdf)
+  tdist[1] <- cdft[1]
+  deltaeta_tstudent[1] <- min_eta
+  
+  for(i in 2:count) {
+    deltaeta_tstudent[i] <- min_eta+(i-1)*DELTA/count
+    
+    if(abs(deltaeta_tstudent[i])<0.0001) {
+      deltaeta_tstudent[i] <- 0.0001
+    }
+    
+    tdist[i] <- t_general(deltaeta_tstudent[i], tm, ts, tdf)
+    cdft[i] <- cdft[i-1] + t_general(deltaeta_tstudent[i], tm, ts, tdf)
+  }
+  
+  cdft <- cdft/cdft[count]
+  deltaeta_tstudent_neg <- abs(deltaeta_tstudent[deltaeta_tstudent < 0])
+  negcdft <- cdft[deltaeta_tstudent < 0]
+  deltaeta_tstudent_pos <- deltaeta_tstudent[deltaeta_tstudent >= 0]
+  poscdft <- 1 - cdft[deltaeta_tstudent >= 0]
+  
+  count_tstudent_neg <- length(deltaeta_tstudent_neg)
+  count_tstudent_pos <- length(deltaeta_tstudent_pos)
+
+  lines(deltaeta_tstudent_neg, negcdft, lwd = 2, col = 'red')
+  lines(deltaeta_tstudent_pos, poscdft, lwd = 2, lty = 2)
+  mtext(cex = 0.75, paste("mean = ", round(tm, 2), " df = ", 
+                          round(tdf,2), "  scale = ", round(ts,2)), 3, 1)
+  
+  if(log == "xy") {
+    position = "bottomleft"
+  }
+  else {
+    position = "topright"
+  }
+  
+  
+  if(TRUE) {
+    legend(position, cex = 1,
+           c(expression(paste("Negative, ", omega, " = 0.65 ", rad.s^-1)),
+             expression(paste("Positive")),
+             expression(paste("Negative, ", omega, " = 1.3 ", rad.s^-1)),
+             expression(paste("Positive")),
+             expression(paste("Negative, ", omega, " = 5.3 ", rad.s^-1)),
+             expression(paste("Positive"))),
+           pt.cex <- c(1.5, 1.5, 1, 1, 0.5, 0.5),
+           pch = rep(1, 6),
+           col=c("red","black","red","black","red","black"))
+  }  
+  
+  if(FALSE) {
+    legend(position, cex = 1,
+           c(expression(paste("Negative, ", omega, " = 0.76 ", rad.s^-1)),
+             expression(paste("Positive")),
+             expression(paste("Negative, ", omega, " = 0.94 ", rad.s^-1)),
+             expression(paste("Positive")),
+             expression(paste("Negative, ", omega, " = 5.7 ", rad.s^-1)),
+             expression(paste("Positive"))),
+           pt.cex = c(1.5, 1.5, 1, 1, 0.5, 0.5),
+           pch = rep(1, 6), 
+           col = c("red","black","red","black","red","black"))
+  }    
+ 
+  plot_cdfmasterstudent <- data.frame(Format(c(deltaeta_tstudent_neg, deltaeta_tstudent_pos)),
+                                      Format(c(negcdft, rep(NA, count_tstudent_pos))),
+                                      Format(c(rep(NA, count_tstudent_neg), poscdft)))
+  
+  
+  setwd(path_Results)
+  write.table(plot_cdfmasterstudent, quote = FALSE, file = "plot_mastercurve_Student.txt", 
+              na = "", sep = " ", col.names = TRUE, row.names = FALSE, dec=".")
+
+  
+  if(plotfile) {
+  
+    all_scaled_datax <- c(all_scaled_datax, deltaeta_tstudent_neg, deltaeta_tstudent_pos)
+    negcdft <- c(rep(NA, length(all_scaled_datax)), negcdft, rep(NA, count_tstudent_pos))
+    poscfdt <- c(rep(NA, length(all_scaled_datax)), rep(NA, count_tstudent_neg), poscdft)
+
+    if(TRUE) {
+      plot_expcdfneg_film9 <- plot_index[[1]]
+      plot_expcdfpos_film9 <- plot_index[[2]]
+      plot_expcdfneg_film10 <- plot_index[[3]]
+      plot_expcdfpos_film10 <- plot_index[[4]]
+      plot_expcdfneg_film15 <- plot_index[[5]]
+      plot_expcdfpos_film15 <- plot_index[[6]]
+      plot_expcdfneg_film21 <- plot_index[[7]]
+      plot_expcdfpos_film21 <- plot_index[[8]]
+      plot_all_data <- data.frame(Format(plot_datax),
+                               Format(plot_expcdfneg_film9),
+                               Format(plot_expcdfpos_film9),
+                               Format(plot_expcdfneg_film10),
+                               Format(plot_expcdfpos_film10),
+                               Format(plot_expcdfneg_film15),
+                               Format(plot_expcdfpos_film15),
+                               Format(plot_expcdfneg_film21),
+                               Format(plot_expcdfpos_film21),
+                               Format(negcfdt),
+                               Format(poscfdt))
+    }
+    
+    if(FALSE) {
+      plot_expcdfneg_film12 <- plot_index[[1]]
+      plot_expcdfpos_film12 <- plot_index[[2]]
+      plot_expcdfneg_film13 <- plot_index[[3]]
+      plot_expcdfpos_film13 <- plot_index[[4]]
+      plot_expcdfneg_film17 <- plot_index[[5]]
+      plot_expcdfpos_film17 <- plot_index[[6]]
+      plot_all_data <- data.frame(Format(plot_datax),
+                               Format(plot_expcdfneg_film12),
+                               Format(plot_expcdfpos_film12),
+                               Format(plot_expcdfneg_film13),
+                               Format(plot_expcdfpos_film13),
+                               Format(plot_expcdfneg_film17),
+                               Format(plot_expcdfpos_film17),
+                               Format(negcfdt),
+                               Format(poscfdt))
+    }
+    
+    setwd(path_Results)
+    write.table(plot_all_data, quote = FALSE, file = "plot_mastercurve_delta_eta_scaled.txt",
+                na = "", sep = " ", col.names = TRUE, row.names = FALSE, dec = ".")
+  }
+}
+```
+
+
+### Raw data analysis
+
+```{r, include = FALSE}
+Rawdata_RDT = function(analyserawdata) {
+  
+  setwd(path_Input)
+  
+  if(analyserawdata == "OK") {
+    dataset <-  read.delim("Recol_film1 57mHz.txt", sep = "\t", 
+                           nrows=500, header = TRUE, stringsAsFactors = FALSE)
+    dim(dataset)
+    
+    Pil = "OK"
+    
+    if (Pil == "OK") {
+      row <- 1800
+      
+      firstline <- c(dataset[row,1], dataset[row,2], dataset[row,3])
+      print(firstline)
+      
+      if (is.na(dataset[row,3])) {
+        print("stop due to NA")
+        print(row)
+      }
+    }
+    
+    for (i in 1000:3000) {
+      if (is.na(dataset[i,3])) {
+        print("stop due to NA")
+        iend <- i-1
+        print(iend)
+        print(dataset[iend,3])
+        print(dataset[i,3])
+        break
+      }
+    }
+    
+    quit(save = "ask")
+    
+  }
+  
+  dim <- length(File)
+  
+  for (i_t_eta in 1:dim) {
+    t_eta <- read.delim(File[i_t_eta], sep = "\t", nrows = 500, 
+                        header = TRUE, stringsAsFactors = FALSE)
+    print(t_eta)
+    
+    for (i in 1:500) {
+      if (is.na(t_eta[i,5])) {
+        Dimdata <- i-1
+        break
+      }
+    }  
+    
+    t <- head(unlist((t_eta[,1])), Dimdata)
+    eta <- head(unlist((t_eta[,5])), Dimdata)
+    df_t_eta <- data.frame(t, eta)
+    WriteXLS(df_t_eta, paste((File[i_t_eta]), ".xlsx",sep <- ""), SheetNames  <-  "Checkdata")
+  }
+}
+```
+
+
+### General Fit
+
+```{r, include = FALSE}
+fit_general = function(film, fitlag, fitvariogram, averagetime, FIT, pos_line) {
+  
+  if (FIT == 0) {
+    maxvar <- max(fitvariogram)
+    fraction_period <- 0.5
+    C0l <- fraction_period*maxvar/5
+    C0m <- C0l*5
+    period <- 150
+    int <- 100
+    
+    if(FALSE) {
+      if(film == "film20" | film == "film18"|film == "film21") {
+        period <- 150
+        int <- 30
+      }
+      
+      if(film == "film1" | film == "film19") {
+        period <- 80
+        int <- 40
+      }
+      
+      if(film == "film14") {
+        period <- 40
+        int <- 20
+      }
+    }
+    
+    if(FALSE) {
+      if(film == "film17") {
+        period <- 50
+        int <- 25
+      }
+    }
+    
+    if(FALSE) {
+      if(film == "film20" | film == "film18") {
+        period <- 80
+        int <- 20
+      }
+    }
+    
+    if(TRUE) {
+      
+      C1l <- period - int
+      C1m <- period + int
+      C2l <- 0.1*C0l
+      C2m <- C0m
+      
+      if(TRUE) {
+        C2l <- 0.036
+        C2m <- C2l
+        C3l <- 0.658
+        C3m <- C3l
+      }
+      
+      C0s <- (C0l+C0m)/2
+      C1s <- (C1l+C1m)/2
+      C2s <- (C2l+C2m)/2
+      C3s <- (C3l+C3m)/2
+      
+      Modelhole_all(FIT)
+      
+      variogramfit <- nlsLM(fitvariogram ~ Modelhole(fitlag, C0_constant_cosinus, C1_T, C2_constant_GRW, C3_GRW),
+                            start = list(C0_constant_cosinus = C0s, C1_T = C1s, 
+                                         C2_constant_GRW = C2s, C3_GRW = C3s),
+                            lower = c(C0l,C1l,C2l,C3l),
+                            upper = c(C0m,C1m,C2m,C3m))
+      
+      
+      C0_constant_cosinus <- coef(variogramfit)[1]
+      C1_T <- coef(variogramfit)[2]
+      C2_constant_GRW  <- coef(variogramfit)[3]
+      C3_GRW  <- coef(variogramfit)[4]
+      
+      x <- (10:(10*length(fitlag)))/10
+      prediction <- predict(variogramfit, list(x))
+      
+      lines(lwd = 2, prediction, col = "red")
+      lines(lwd = 2, x, 2*C2_constant_GRW*(1-C3_GRW^x)/(1-C3_GRW^2), col="blue")
+      mtext(cex = 0.75, paste0("T(s) = ", round(C1_T,1), " alfa = ", 
+                               round(C3_GRW,3)," sigma^2 = ", round(C2_constant_GRW, 3)), 3, pos_line)
+      
+      if(film == "film15" | film == "film10" | film == "film21") {
+        GRW <- 2*C2_constant_GRW*(1-C3_GRW^fitlag)/(1-C3_GRW^2)
+        Periodic_plus_GRW <- predict(variogramfit, list(fitlag))
+        plot_fit <- data.frame(fitlag, fitvariogram, Periodic_plus_GRW, GRW)
+        file <- paste(film, "plot_fit_variogram_GRW.txt", sep = "")
+        
+        setwd(path_DataAnalysisMethod)
+        
+        write.table(format(plot_fit, digits = 3), file = file,
+                    na = "", quote = FALSE, sep = " ", col.names = TRUE, row.names = FALSE)
+      }
+    }
+  }
+  
+  if (FIT == 1) {
+    maxvar <- max(fitvariogram)
+    fraction_period <- 0.5
+    C0l <- fraction_period * maxvar/5
+    C0m <- C0l * 5
+    period <- 150
+    int <- 100
+    
+    if(TRUE) {
+      if(film == "film20"|film == "film18"|film == "film21") {
+        period <- 120
+        int <- 30
+      }
+      if(film == "film1"|film == "film19") {
+        period <- 80
+        int <- 40
+      }
+      if(film == "film14") {
+        period <- 40
+        int <- 20
+      }
+    }
+    
+    if(TRUE) {  
+      if(film == "film17") {
+        period <- 50
+        int <- 25
+      }
+    }
+    
+    if(TRUE) {
+      if(film == "film20"|film == "film18") {
+        period <- 80
+        int <- 20
+      }
+    }
+    
+    C1l <- period - int
+    C1m <- period + int
+    C2l <- 0.1 * C0l
+    C2m <- C0m
+    
+    if(TRUE) {
+      C2l <- 0.058
+      C2m <- C2l
+      C3l <- 2.386
+      C3m <- C3l
+    }
+    
+    C0s <- (C0l+C0m)/2
+    C1s <- (C1l+C1m)/2
+    C2s <- (C2l+C2m)/2
+    C3s <- (C3l+C3m)/2
+    
+    Modelhole_all(FIT)
+    
+    variogramfit <- nlsLM(fitvariogram ~ Modelhole(fitlag, C0_constant_cosinus, 
+                                                     C1_T, C2_constant_OU, C3_correlationtime),
+                          start = list(C0_constant_cosinus = C0s, C1_T = C1s, C2_constant_OU = C2s,
+                                       C3_correlationtime = C3s),
+                          lower = c(C0l, C1l, C2l, C3l),
+                          upper = c(C0m, C1m, C2m, C3m))
+    
+    
+    C0_constant_cosinus  <- coef(variogramfit)[1]
+    C1_T  <- coef(variogramfit)[2]
+    C2_constant_OU  <- coef(variogramfit)[3]
+    C3_correlationtime  <- coef(variogramfit)[4]
+    
+    x <- (10:(10*length(fitlag)))/10
+    y <- C2_constant_OU*(C3_correlationtime/averagetime)*(1-exp(-x*averagetime/C3_correlationtime))
+    predict_ <- predict(variogramfit, list(x))
+    lines(lwd = 2, predict_, col = 'red')
+    lines(lwd = 2, x, y, col="blue")
+    mtext(cex = 0.75, paste0("T(s) = ", round(C1_T, 1)," tau(s) = ", round(C3_correlationtime, 3)," sigma^2 = ", round(C2_constant_OU, 3)), 3, pos_line)
+    
+    
+    if(film  ==  "film15" | film  ==  "film10" | film  ==  "film21") {
+      OUP <- C2_constant_OU*(C3_correlationtime/averagetime)*(1-exp(-fitlag*averagetime/C3_correlationtime))
+      Periodic_plus_OUP <- predict(variogramfit, list(fitlag))
+      plot_fit <- data.frame(fitlag, fitvariogram, Periodic_plus_OUP, OUP) 
+      file <- paste(film, "plot_fit_variogram_OUP.txt", sep = "")
+      setwd(path_DataAnalysisMethod)
+      write.table(format(plot_fit, digits = 3), file = file, quote = FALSE,
+                  na = "", sep = " ", col.names = TRUE, row.names = FALSE)
+    }
+  }
+  
+  
+  if (FIT == 2) {
+    
+    Modelhole_all(FIT)
+    
+    variogramfit <- nlsLM(fitvariogram ~ Modelhole(fitlag, C0_constant_GRW, C1_GRW),
+                          start = list(C0_constant_GRW = 0.05, C1_GRW = 0.5))
+    C0_constant_GRW <- coef(variogramfit)[1]
+    C1_GRW <- coef(variogramfit)[2]
+    lines(lwd = 2, predict(variogramfit), col = 'blue')
+    mtext(cex = 0.75, paste0("alfa = ", round(C1_GRW, 3)," sigma^2 = ", 
+                             round(C0_constant_GRW, 3)), 3, pos_line)
+    
+    if(length(fitlag)>7) {
+      GRW <- predict(variogramfit,list(fitlag))
+      plot_fit <- data.frame(fitlag, fitvariogram, GRW)
+      
+      file <- paste(film, "plot_fit_variogram_GRW_only.txt", sep = "")
+      setwd(path_DataAnalysisMethod)
+      write.table(format(plot_fit, digits = 3),file = file, na = "", quote = FALSE,
+                  sep = " ", col.names = TRUE, row.names = FALSE)
+    }
+  }
+  
+  
+  if (FIT  ==  3) {
+    
+    Modelhole_all(FIT)
+    
+    variogramfit <- nlsLM(fitvariogram ~ Modelhole(fitlag, C0_constant_OUP, C1_correlationtime),
+                          start = list(C0_constant_OUP = 0.1, C1_correlationtime = 5))
+    C0_constant_OUP  <- coef(variogramfit)[1]
+    C1_correlationtime  <- coef(variogramfit)[2]
+    
+    lines(lwd = 2, predict(variogramfit), col = 'blue')
+    mtext(cex = 0.75, paste0("tau = ", round(C1_correlationtime, 3),
+                             "sigma^2 = ", round(C0_constant_OUP, 3)), 3, pos_line)
+    
+    if(length(fitlag)>7) {
+      OUP <- predict(variogramfit, list(fitlag))
+      plot_fit <- data.frame(fitlag, fitvariogram, OUP) 
+      
+      file <- paste(film, "plot_fit_variogram_OUP_only.txt", sep = "")
+      setwd(path_DataAnalysisMethod)
+      write.table(format(plot_fit, digits = 3), file = file, quote = FALSE,
+                  na = "", sep = " ", col.names = TRUE, row.names = FALSE)
+    }
+  }
+  
+  
+  if (FIT == 4) {  
+    
+    Modelhole_all(FIT)
+    
+    variogramfit <- nlsLM(fitvariogram ~ Modelhole(fitlag, C0, C1, C2),
+                          start = list(C0 = 0.32, C1 = 0.1, C2 = 0.05),
+                          lower = c(0.04, 0.01, 0.01),
+                          upper = c(0.4, 0.15, 0.5))
+    
+    C0  <- coef(variogramfit)[1]
+    C1  <- coef(variogramfit)[2]
+    C2  <- coef(variogramfit)[3]
+    lines(predict(variogramfit), col = 'red')
+    mtext(cex = 0.75, paste0("T =  ", round(2*pi*averagetime/C2,1)), 3, pos_line)
+  }
+  
+  
+  if (FIT == 5) {
+    
+    Modelhole_all(FIT)
+    
+    variogramfit <- nlsLM(fitvariogram ~ Modelhole(fitlag, C0),
+                          start = list(C0 = 1))
+    C0 = coef(variogramfit)[1]
+    lines(predict(variogramfit), col = 'red')
+    mtext(cex = 0.75, paste0("cte =  ", round(C0, 3)), 3, pos_line)
+  }
+  
+  print(summary(variogramfit))
+  
+  setwd(path_generatedFiles)
+  write.table(tidy(variogramfit), paste(film, "Fit_", FIT, "_variogram.csv", sep = ""), append = FALSE)
+  
+  if(length(fitlag) > 10) {
+    hist(residuals(variogramfit))
+  }
+  Variogram_fit <- list(summary(variogramfit))
+}
+```
+ 
+
+# START of program
+
+## Main Loop
+
+Ancien calcul pour la simulation et le RW théorique en fonction de alpha
+
+  if(simulation  ==  "yes") {
+    nr <- 300
+    t <- c(1:nr)
+    if(variogram_theory  ==  "yes") {
+      alfa <- NULL
+      alfa[1] <- 0.5
+      alfa[2] <- 0.7
+      alfa[3] <- 0.9
+      alfa[4] <- 0.99
+      
+      theor_variogram_norm <- NULL
+      for (ialfa in 1:4) {
+        theor_variogram <- (1-alfa[ialfa]^t)/(1-(alfa[ialfa])^2)
+        
+        for (i in 1:(nr-1)) {
+          theor_variogram_norm[i] <- theor_variogram[i]/theor_variogram[1]
+        }
+        power <- log(theor_variogram_norm[2])/log(2)
+        power
+        
+        plot(head(t, (nr-1)),theor_variogram_norm, cex.lab = 1.5, type = 'l', log = "xy")
+        lines(t, t, col = "red")
+        mtext(cex = 0.75, paste0("alfa = ", alfa[i]," power = ", round(power, 2)), 3, 0)
+      }
+    }
+    else if (variogram_theory  ==  "no") {
+      amplitude <- 20
+      phase <- 1
+      period <- 150
+      nu <- 1/period
+      trend <- 0
+      alfa <- alfa[1]
+      x <- NULL
+      sd <- 1.5
+      theor_variogram_norm <- NULL
+      average_viscosity <- 20
+      
+      ksi_previous <- rlnorm(1, log(average_viscosity), log(sd))
+      x[1] <- ksi_previous - average_viscosity
+      
+      for (i in 2:nr) {
+        x[i] <- (alfa * x[i-1] + amplitude * (cos(6.28 * nu * inr) - cos(6.28 * nu * (inr - 1))) +
+                   x[1] + trend)
+      }
+      
+      theor_variogram <- NULL
+      theor_variogram[1] <- 1 / (1 + alfa)
+      
+      for (i in 1:(nr-1)) {
+        theor_variogram_norm[i] <- (1-alfa^i)/(1-alfa^2)/theor_variogram[1]
+      }
+      
+      power <- log(theor_variogram_norm[2])/log(2)
+      
+      plot(t, x, cex.lab = 1.5, type = "l", ylim = c(min(x), max(x) + average_viscosity), xlim = c(0,max(at)))
+      mtext(cex = 0.75, paste0("amplitude = ", amplitude, ", period = ",
+                               round(period, 1), " s, trend=  ", round(trend, 1)), 3, 0)
+      
+      
+      eta <- abs(x + average_viscosity)
+      points(t, eta, pch = 20)
+      
+      dfsimulation <- data.frame(t, eta)
+      WriteXLS(dfsimulation, paste("RW Periodic Simulation.xlsx", sep = ""), SheetNames = "Simulation")
+      
+      Distribution_check(eta, lognormal)
+      
+      eta <- log(eta)
+      
+      original_numberofdata <- nr
+      film <- "Simulation"
+    }
+  }
+
+  
+```{r, echo = FALSE, fig.show = TRUE}
+first_reading_testing_rawdata = "no"
+if(first_reading_testing_rawdata  ==  "yes") {
+  analyserawdata = "KO"
+  Rawdata_RDT(analyserawdata)
+}
+
+ID_path <- path_Input
+print(ID_path)
+Film_series <- NULL
+#alldatafiles <- list.files(path = ID_path, ".txt", full.names = TRUE)
+characteristic_string <- "film"
+
+############Alternative way to read datafiles
+alldatafiles <- NULL
+file_number <- readline(prompt = "How many files do you want to read? (at least 5) ")
+for (i in 1:file_number) {
+alldatafiles[i] <- file.choose(new = FALSE)
+}
+
+for (i in 1:length(alldatafiles)) { ## mettre un commentaire : optimiser la boucle, lié au char string l1340
+  
+  start_filmstring <- (unlist(gregexpr(pattern = characteristic_string, alldatafiles[i]))[1])
+
+  if (characteristic_string == "run") {
+    end_filmstring <- (unlist(gregexpr(pattern = "-", alldatafiles[i]))[1]) - 1    
+  } 
+  else {
+    end_filmstring <- (unlist(gregexpr(pattern = ".txt", alldatafiles[i]))[1]) - 1
+  }
+  
+  films <- substr(alldatafiles[i], as.numeric(start_filmstring), as.numeric(end_filmstring))
+  Film_series <- c(Film_series, films)
+}
+
+simulation <- "no"
+variogram_theory <- "no"
+make_equidistant <- "yes"
+rand <- "K"
+
+
+
+Film_frequencies <- NULL
+Film_acf_tau <- NULL
+Film_acf_T <- NULL
+Film_maxV_T <- NULL
+Film_ito_tau <- NULL
+Film_eta_rawdata <- NULL
+Film_eta_no_outliers <- NULL
+Film_eta_detrended <- NULL
+Film_eta_ito <- NULL
+Film_eta <- NULL
+Film_sdetamin_rawdata <- NULL
+Film_sdetamin_no_outliers <- NULL
+Film_sdetamin_detrended <- NULL
+Film_sdetamin <- NULL
+Film_sdetaplus_rawdata <- NULL
+Film_sdetaplus_no_outliers <- NULL
+Film_sdetaplus_detrended <- NULL
+Film_sdetaplus <- NULL
+Film_skewness_rawdata <- NULL
+Film_skewness_no_outliers <- NULL
+Film_skewness_detrended <- NULL
+Film_skewness <- NULL
+Film_kurtosis_rawdata <- NULL
+Film_kurtosis_no_outliers <- NULL
+Film_kurtosis_detrended <- NULL
+Film_kurtosis <- NULL
+Film_averagetime <- NULL
+Film_outliers <- NULL
+Film_numberofdata <- NULL
+Film_alfa <- NULL
+Film_ito_alfa <- NULL
+Film_sigma_sigma_alfa <- NULL
+Film_sigma_sigma_ito <- NULL
+Film_epsilon <- NULL
+Film_tau <- NULL
+Film_sigma_sigma_epsilon <- NULL
+Film_sigma_alfa_eta <- NULL
+Film_sigma_epsilon_eta <- NULL
+Film_GRW_constant_cosinus_all <- NULL
+Film_GRW_T_all <- NULL
+Film_GRW_constant_all <- NULL
+Film_GRW_alfa_all <- NULL
+Film_OU_constant_cosinus_all <- NULL
+Film_OU_T_all <- NULL
+Film_OU_constant_all <- NULL
+Film_OU_epsilon_all <- NULL
+Film_OU_tau_all <- NULL
+Film_GRW_constant_short_time <- NULL
+Film_GRW_alfa_short_time <- NULL
+Film_OU_constant_short_time <- NULL
+Film_OU_epsilon_short_time <- NULL
+Film_OU_tau_short_time <- NULL
+Film_GRW_amplitude_sigma <- NULL
+Film_OU_amplitude_sigma <- NULL
+Film_GRW_sigma_eta_all <- NULL
+Film_GRW_sigma_eta_short_time <- NULL
+Film_OU_sigma_eta_all <- NULL
+Film_OU_sigma_eta_short_time <- NULL
+y_GRW_master_plot <- NULL
+x_GRW_master_plot <- NULL
+y_OUP_master_plot <- NULL
+x_OUP_master_plot <- NULL
+
+
+#sink("Fit Output.txt", append = FALSE)
+
+cat("#########################################", sep = "\n")
+cat(Film_series, sep = "\n")
+cat("#########################################", sep = "\n")
+
+for(i in 1:length(Film_series)) {
+  if(simulation == "yes") {
+    nr <- 300
+    t <- c(1:nr)
+    
+    if(variogram_theory == "yes") {
+      ialfa <- 0
+      alfa <- NULL
+      alfa[1] <- 0.5
+      alfa[2] <- 0.7
+      alfa[3] <- 0.9
+      alfa[4] <- 0.99
+      theor_variogram_norm <- NULL
+      
+      for (ialfa in 1:4) {
+        theor_variogram <- (1-alfa[ialfa]^t)/(1-(alfa[ialfa])^2)
+        
+        for (i in 1:(nr-1)) {
+          theor_variogram_norm[i] <- theor_variogram[i]/theor_variogram[1]
+        }
+        
+        power <- log(theor_variogram_norm[2])/log(2)
+        print(power)
+        plot(head(t, (nr-1)), theor_variogram_norm, cex.lab = 1.5, type = 'l', log = "xy")
+        lines(t, t, col = "red")
+        mtext(cex = 0.75, paste0("alfa = ", alfa[ialfa], " power = ", round(power, 2)), 3, 0)
+      }
+    }
+    else {
+      amplitude <- 20
+      phase <- 1
+      period <- 150
+      nu <- 1/period
+      trend <- 0
+      alfa <- 0.5
+      x <- NULL
+      sd <- 1.5
+      
+      theor_variogram_norm <- NULL
+      theor_variogram <- NULL
+      average_viscosity <- 20
+      ksi_previous <- rlnorm(1, log(average_viscosity), log(sd))
+      x[1] <- ksi_previous-average_viscosity
+      
+      for (i in 2:nr) {
+        x[i] <- (alfa*x[i-1] + amplitude * (cos(6.28*nu*i) - cos(6.28*nu*(i-1))) +
+                   ksi_previous-average_viscosity + trend)
+        
+        ksi_previous <- rlnorm(1, log(average_viscosity), log(sd))
+        
+        for (k in 1:10) {
+          if ((abs(x[i] + average_viscosity) < average_viscosity/5)) {
+            ksi_previous <- rlnorm(1, log(average_viscosity), log(sd))
+            
+            x[i]=(alfa*x[i-1]+ 
+                    amplitude * (cos(6.28*nu*i) - cos(6.28*nu*(i-1))) + 
+                    ksi_previous-average_viscosity + trend)
+            
+          }
+          else{
+            break
+          }
+        }
+      }
+      theor_variogram[1] <- 1/(1 + alfa)
+      
+      for (i in 1:(nr-1)) {
+        theor_variogram_norm[i] <- (1-alfa^i)/(1-alfa^2)/theor_variogram[1]
+      }
+      
+      power <- log(theor_variogram_norm[2])/log(2)
+      plot(head(t, (nr-1)), theor_variogram_norm, cex.lab = 1.5, type = 'l', log = "xy")
+      lines(t, t, col = "red")
+      mtext(cex = 0.75, paste0("alfa = ", alfa, " power = ", round(power, 2)), 3, 0)
+      
+      plot(t, x, cex.lab = 1.5, type = "l",ylim = c(min(x), max(x) + average_viscosity), xlim = c(0,max(at)))
+      mtext(cex = 0.75, paste0("amplitude = ", amplitude, ", period = ", round(period, 1),
+                               " s, trend =  ", round(trend, 1)), 3, 0)
+      
+      eta <- abs(x + average_viscosity)
+      points(t, eta, pch = 20)
+      dfsimulation <- data.frame(t,eta)
+      WriteXLS(dfsimulation, paste("RW Periodic Simulation.xlsx", sep = ""), SheetNames = "Simulation")
+      
+      Distribution_check(eta, lognormal)
+      
+      eta <- log(eta)
+      original_numberofdata=nr
+      film = "Simulation"
+    }
+  }
+  
+  else if(simulation  ==  "no") {
+    film <- Film_series[i]
+    test <- alldatafiles[i]
+    t_eta <-  read.delim(test, sep = "\t", nrows = 1000, header = TRUE, stringsAsFactors = FALSE)
+    
+      if(characteristic_string  ==  "film") {
+        column <- 5 ##############################
+        frequency <- (unlist((t_eta[1, 2])))
+      }
+      #else {
+      #  column <- 2
+      #  frequency <- 0
+      #  }
+
+    for (i_count in 1:1000) {
+      if (is.na(t_eta[i_count, column])) {
+        Dimdata <- i_count - 1
+        print(Dimdata)
+        #stop()
+        break
+        }
+    }
+
+    Film_frequencies <- c(Film_frequencies, frequency)
+    t <- head(unlist((t_eta[, 1])), Dimdata)
+    eta <- head(unlist((t_eta[, column])), Dimdata)
+
+    cat("------------------------------------------------------------", sep = "\n")
+    cat((paste(film, "   frequency (1/s) = ", round(frequency, 3), sep = "")), sep = "\n")
+    cat("------------------------------------------------------------", sep ="\n")
+    original_numberofdata <- length(t)
+    deltat <- max(t)/length(t)
+
+    par(mfrow=c(2,4), xaxs = "i", yaxs = "i", mar = c(5,5,5,5))
+
+    if (rand  ==  "OK") {
+        eta <- sample(eta)
+    } 
+    
+    if (sd(eta)/mean(eta) > 0.01) {
+      ymin <- exp(trunc(min(log(eta))))
+      ymax <- exp(trunc(max(log(eta))) + 1)
+      
+      if(characteristic_string  ==  "run") {
+        ymax <- exp(max(log(eta)))
+      }
+    }
+    else {
+      ymin <- min(eta)
+      ymax <- max(eta)
+    }
+    ylim <- c(ymin, ymax)
+    ylab <- expression(paste(eta," ",(Pa.s)))
+    
+    plot(t, eta, cex.lab = 1.5, log = "y", xlab = "t", ylab = ylab, type = "l", ylim = ylim)
+    title(film,line=2.5)
+    mtext(cex = 0.75, paste0("ang. freq = ", round(frequency, 3), " rad/s"), 3, 1)
+
+    trace_meaneta <- NULL
+    trace_sdeta <- NULL
+    trace_kurtosiseta <- NULL
+    trace_skewnesseta <- NULL
+    
+    meaneta <- mean(log(eta), na.rm = TRUE)
+    sdeta <- sd(log(eta), na.rm = TRUE)
+
+    trace_meaneta <- c(trace_meaneta, meaneta)
+    trace_sdeta <- c(trace_sdeta, sdeta)
+    
+    skewnesseta <- myskewness(log(eta))
+    kurtosiseta <- mykurtosis(log(eta))
+    
+    trace_skewnesseta <- c(trace_skewnesseta, skewnesseta)
+    trace_kurtosiseta <- c(trace_kurtosiseta, kurtosiseta)
+    
+    mtext(cex = 0.75, paste0("<eta> ", round(meaneta, 2), " sd ", round(sdeta, 1), 
+                             " <eta>lin ", round(exp(meaneta), 2), " dt ", 
+                             round(deltat, 2)), 3, 0)
+
+    if(FALSE) {
+      pacf(log(eta), lag.max = original_numberofdata, main = film)
+      acf(log(eta), lag.max = original_numberofdata, main = film)
+    }
+
+
+    LOG <- FALSE
+    
+    setwd(path_Dataprep)
+    lower_vis <- as.numeric(boxplot(eta, plot = FALSE)$stats[1])
+    upper_vis <- as.numeric(boxplot(eta, plot = FALSE)$stats[5])
+    
+    if(LOG) {
+      lower_vis <- as.numeric(boxplot(log(eta), plot = FALSE)$stats[1])
+      upper_vis <- as.numeric(boxplot(log(eta), plot = FALSE)$stats[5])
+
+      if(film != "Lehigh_data") {
+        lower_vis <- -1
+      }
+      
+      plot(t, eta, cex.lab = 1.5, log = "y", pch = 20, ylim = ylim, ylab = ylab)
+      mtext(cex = 0.75, paste0("data filter ", round(exp(lower_vis), 2), " ", 
+                               round(exp(upper_vis), 2)), 3, 1)
+      
+      eta_NA <- rep(NA, length(eta))
+      
+      if(film == "film15" | film == "film10" | film == "film21") {
+        file <- paste(film, "eta_uncleaned_eta.txt", sep = "")
+        
+        eta_uncleaned <- eta
+        eta_NA <- eta
+        eta_NA[log(eta) <= lower_vis | log(eta) >= upper_vis] <- NA
+        eta_cleaned <- eta_NA
+        
+        pub_eta_uncleaned_eta_t <- data.frame(sprintf("%.6s", t), 
+                                              sprintf("%.6s", eta_uncleaned), 
+                                              sprintf("%.6s", eta_cleaned))
+        
+        write.table(pub_eta_uncleaned_eta_t, file = file, quote = FALSE, 
+                    na = "", sep = " ", col.names = TRUE, row.names = FALSE, dec = ".")
+      }
+      
+      t <- t[log(eta) > lower_vis & log(eta) < upper_vis]
+      eta <- eta[log(eta) > lower_vis & log(eta) < upper_vis]
+    } 
+    else {
+      lower_vis <- as.numeric(boxplot(eta, plot = FALSE)$stats[1])
+      upper_vis <- as.numeric(boxplot(eta, plot = FALSE)$stats[5])
+      
+      if(film != "Lehigh_data") {
+        lower_vis <- 0
+      }
+      
+      mtext(cex = 0.75, paste0("data filter ", round(lower_vis, 2),
+                               " ", round(upper_vis, 2)), 3, 1)
+      
+      if(film == "film15" | film == "film10" | film == "film21") {
+        file <- paste(film, "eta_uncleaned_eta.txt", sep = "")
+    
+        eta_uncleaned <- eta
+        eta_NA <- eta
+        eta_NA[log(eta) <= lower_vis | log(eta) >= upper_vis] <- NA
+        eta_cleaned <- eta_NA
+        
+        pub_eta_uncleaned_eta_t <- data.frame(sprintf("%.6s", t), sprintf("%.6s", eta_uncleaned),
+                                               sprintf("%.6s", eta_cleaned))
+        
+        write.table(pub_eta_uncleaned_eta_t, file = file, quote = FALSE, 
+                    na = "", sep = " ", col.names = TRUE, row.names = FALSE, dec = ".")
+      }
+      
+      t   <- t[eta > lower_vis & eta < upper_vis]
+      eta <- eta[eta > lower_vis & eta < upper_vis]
+    }
+    
+    lines(t, eta, col = "red")
+    meaneta <- mean(log(eta), na.rm = TRUE)
+    sdeta <- sd(log(eta), na.rm = TRUE)
+    trace_meaneta <- c(trace_meaneta, meaneta)
+    trace_sdeta <- c(trace_sdeta, sdeta)
+    skewnesseta <- myskewness(log(eta))
+    kurtosiseta <- mykurtosis(log(eta))
+    trace_skewnesseta <- c(trace_skewnesseta, skewnesseta)
+    trace_kurtosiseta <- c(trace_kurtosiseta, kurtosiseta)
+    
+    Dimdata <- length(t)
+    Film_outliers <- c(Film_outliers, (original_numberofdata - Dimdata))
+    Film_numberofdata <- c(Film_numberofdata, original_numberofdata)
+    mtext(cex = 0.75, paste0("original data # ", original_numberofdata, " new data # ", Dimdata), 3, 2)
+    mtext(cex = 0.75, paste0("<eta> ", round((meaneta), 2), " sd ", 
+                             round((sdeta), 2), " <eta> ", round(exp(meaneta), 2)), 3, 0)
+    
+    
+    lognormal <- "true"
+    Distribution_check(eta, lognormal)
+    
+    mtext(cex = 0.75, paste0("Data without outliers"))
+    plot_pacf <- pacf(log(eta), lag.max = Dimdata, main = film)
+    plot_acf <- acf(log(eta), lag.max = Dimdata, main = film)
+    
+    if(rand == "OK") { 
+      break 
+    }
+    
+    if(film == "film15" | film == "film10" | film == "film21") {
+      df_pacf <- data.frame(plot_pacf$lag, sprintf("%.6s", plot_pacf$acf))
+      write.table(df_pacf, file = paste(film, "PACF_cleaned.txt", sep = ""), quote = FALSE,
+                  na = "", sep = " ", col.names = TRUE, row.names = FALSE, dec = ".")
+      
+      file <- paste(film, "ACF_cleaned.txt", sep = "")
+      df_acf <- data.frame(plot_acf$lag, sprintf("%.6s", plot_acf$acf))
+      write.table(df_acf, file = paste(film, "ACF_cleaned.txt", sep = ""), quote = FALSE,
+                  na = "", sep = " ", col.names = TRUE, row.names = FALSE, dec = ".")
+    }
+    
+    log_eta <- log(eta)
+    xmax <- max(t) + 5
+
+    if (sd(eta)/mean(eta) > 0.01) {
+      ymin <- exp(trunc(min(log_eta)))
+      ymax <- exp(trunc(max(log_eta)) + 1)
+      
+      if(characteristic_string == "run") { 
+        ymax <- exp(max(log_eta))
+      }
+    } 
+    else {
+      ymin <- min(eta)
+      ymax <- max(eta)
+    }
+    ylim <- c(ymin, ymax)
+    
+    etafit <- nlsLM(log_eta ~ Modeleta(t, trend, cte),
+                    start = list(trend = 0.1, cte = 0.5*(max(log_eta) - min(log_eta))))
+    
+    trend  <- as.numeric(coef(etafit)[1])
+    cte    <- as.numeric(coef(etafit)[2])
+    log_eta_detr <- log_eta + trend*(0.5*max(t) - t)
+    
+    
+    plot(t, eta, cex.lab = 1.5, log = "y", pch = 20, xlab = "t", 
+         ylab = ylab, ylim = ylim, xlim = c(0, xmax))
+    mtext(cex = 0.75, paste0("trend= ", round(trend, 5)), 3, 1)
+    lines(t, exp(log_eta_detr), cex = 0.5, col = "red")
+    lines(t, exp(Modeleta(t, trend, cte)), type = "l", col = "black", lwd = 2)
+    
+    
+    etafit_detr <- nlsLM(log_eta_detr ~ Modeleta(t, trend, cte),
+                      start = list(trend = 0.1, cte = 0.5*(max(log_eta_detr) - min(log_eta_detr))))
+    
+    trend0  <- as.numeric(coef(etafit_detr)[1])
+    cte0    <- as.numeric(coef(etafit_detr)[2])
+    meaneta <- mean(log_eta_detr)
+    sdeta <- sd(log_eta_detr)
+    trace_meaneta <- c(trace_meaneta, meaneta)
+    trace_sdeta <- c(trace_sdeta, sdeta)
+    skewnesseta <- myskewness(log_eta_detr)
+    kurtosiseta <- mykurtosis(log_eta_detr)
+    trace_skewnesseta <- c(trace_skewnesseta, skewnesseta)
+    trace_kurtosiseta <- c(trace_kurtosiseta, kurtosiseta)
+    
+    if(Dimdata > 200) {
+      col <- "white" 
+    }
+    else {
+      col <- "red"
+    }
+    abline(lwd = 2, h = exp(meaneta), col = col)
+    mtext(cex = 0.75, paste0("trend = ", round(trend0, 5), " eta - trend = ",
+                             round(exp(meaneta), 2)), 3, col = "red", 0)
+    
+    if(film == "film15" | film == "film10" | film == "film21") {
+      paste(film, "detrended_equidist.txt", sep = "")
+      
+      plot_detrending <- data.frame(t, sprintf("%.6s", exp(log_eta)),
+                          sprintf("%.6s", exp(Modeleta(t, trend, cte))),
+                          sprintf("%.6s", exp(log_eta_detr)), sprintf("%.6s",
+                          exp(Modeleta(t, trend0, cte0))))
+      
+      write.table(plot_detrending, file = paste(film, "detrended_equidist.txt", sep = ""),
+                  quote = FALSE, na = "", sep = " ", col.names = TRUE, row.names = FALSE, 
+                  dec = ".")
+    }
+    
+    if(FALSE) {
+      eta_detr <- exp(log_eta_detr)
+      lognormal <- "true"
+      Distribution_check(eta_detr, lognormal)
+      mtext(cex = 0.75, paste0("Detrended points "))
+      log_eta_detr <- log(eta_detr)
+    }
+    
+    Dimdata <- original_numberofdata
+    averagetime <- max(t)/Dimdata
+
+    if (make_equidistant == "yes") {
+      aeta <- 0
+
+      at <- unlist((approx(t, log_eta_detr, method = "linear", 
+                            n = Dimdata, rule = 2, ties = mean)[1]))
+      log_aeta <- unlist((approx(t, log_eta_detr, method = "linear", 
+                            n = Dimdata, rule = 2, ties = mean)[2]))
+     
+      aeta <- exp(log_aeta)
+      ito_delta_eta <- diff(log_aeta)
+      ito_eta <- head(log_aeta, (Dimdata - 1))
+      
+      fitline <- lm(ito_delta_eta ~ ito_eta)
+      summary(fitline)
+      plot(ito_eta, ito_delta_eta, main = "Ito Calculus ", col = "red")
+      abline(fitline, lwd = 2)
+      
+      intercept <- as.numeric(coefficients(fitline)[1])
+      slope <- as.numeric(coefficients(fitline)[2])
+      resid_fit <- residuals(fitline)
+      sigma <- sd(resid_fit)
+      beta_0 <- intercept
+      beta_1 <- slope
+      alfa_Mod <- 1 + beta_1
+      alfa <- -beta_1/deltat
+      mu_star <- beta_0/deltat/alfa
+      t12 <- log(2)/alfa
+      
+      sigma_ito <- round(sigma^2, 2)
+      alfa_ito <- round(alfa_Mod, 2)
+      tau_ito <- round(1/alfa, 2)
+      eta_inf_ito <- round(exp(mu_star-sigma*sigma/2/alfa), 2)
+      mtext(cex = 0.75, paste0("sigma2 = ", sigma_ito, " alfa= ", alfa_ito), 3, 1)
+      mtext(cex = 0.75,paste0(" tau = ", tau_ito, " s visc_inf = ", eta_inf_ito, " Pa.s"), 3, 0)
+      
+      Film_ito_tau <- c(Film_ito_tau, tau_ito)
+      Film_ito_alfa <- c(Film_ito_alfa, alfa_ito)
+      Film_sigma_sigma_ito <- c(Film_sigma_sigma_ito, sigma_ito)
+      Film_eta_ito <- c(Film_eta_ito, eta_inf_ito)
+      meanlog <- coef(fitdistr(resid_fit, "normal"))[1]
+      sdlog <- coef(fitdistr(resid_fit, "normal"))[2]
+      
+      plot(ecdf(resid_fit), cex.lab = 1.5, xlim = c(min(resid_fit),
+                                              max(resid_fit)*1.1), xlab = expression(paste(sigma)))
+      
+      plot(ecdf(rnorm(1000, (meanlog), (sdlog))), cex.lab = 1.5, #################
+           col = "red", add = TRUE, do.points = FALSE)
+      
+      lognormal <- "true"
+      Distribution_check(aeta, lognormal)
+      
+      mtext(cex = 0.75, paste0("Equidistant original data #"), 0.5)
+      log_aeta <- log(aeta)
+      
+      if(film == "film15" | film == "film10" | film == "film21") {
+        paste(film, "PACF_cleaned_detr_eq.txt", sep = "")  
+        plot_pacf <- pacf(log_aeta, lag.max = Dimdata, plot = FALSE)
+        df_pacf <- data.frame(plot_pacf$lag,sprintf("%.6s", plot_pacf$acf))
+        write.table(df_pacf, file = paste(film, "PACF_cleaned_detr_eq.txt", sep = ""),
+                    quote = FALSE, na = "", sep = " ", col.names = TRUE, row.names = FALSE, 
+                    dec = ".")
+        
+        plot_acf <- acf(log_aeta, lag.max = Dimdata, plot = FALSE)
+        df_acf <- data.frame(plot_acf$lag, sprintf("%.6s", plot_acf$acf))
+        write.table(df_acf, file = paste(film, "ACF_cleaned_detr_eq.txt", sep = "") ,
+                    quote = FALSE, na = "", sep = " ", col.names = TRUE, row.names = FALSE, 
+                    dec = ".")
+      }
+      
+      pacf(log_aeta, lag.max = Dimdata/2)
+      analysis_acf <- acf(log_aeta, lag.max = (Dimdata/2))
+      lag_acf <- analysis_acf$lag
+      T_acf <- 2*averagetime*lag_acf[which.min(analysis_acf$acf[1:(0.8*max(lag_acf))])]
+      small_lag_range <- 28
+      
+      analysis_acf <- acf(log_aeta, lag.max = (small_lag_range), plot = FALSE)
+      lag_acf <- averagetime*analysis_acf$lag
+      acf_value <- analysis_acf$acf
+      
+      plot(lag_acf, acf_value, cex.lab = 1.5, pch = 20, col = "grey",
+           xlab = "lag_acf", xaxs="i", ylim = c(-0.4, 1.2))
+      
+      acf_fit <- nlsLM(acf_value ~ Model_acf(lag_acf, tau),
+                       start = list(tau = 1),
+                       lower = c(0),
+                       upper = c(100))
+      summary(acf_fit)
+      
+      tau <- as.numeric(coef(acf_fit)[1])
+      Film_acf_tau <- c(Film_acf_tau, tau)
+     
+      plot_acf_fit <- data.frame(lag_acf, predict(acf_fit))
+      lines(plot_acf_fit, lwd = 2, col = "red")
+      mtext(cex = 0.75, paste0("tau = ", round(tau, 2)," T = ", round(T_acf, 1)), 3, 1)
+      
+      xmax <- max(at)
+      meaneta <- mean(log_aeta)
+      sdeta <- sd(log_aeta)
+      trace_meaneta <- c(trace_meaneta, meaneta)
+      trace_sdeta <- c(trace_sdeta, sdeta)
+      skewnesseta <- myskewness(log_aeta)
+      kurtosiseta <- mykurtosis(log_aeta)
+      trace_skewnesseta <- c(trace_skewnesseta, skewnesseta)
+      trace_kurtosiseta <- c(trace_kurtosiseta, kurtosiseta)
+      
+      meanetamin <- meaneta - sdeta
+      meanetamax <- meaneta + sdeta
+      ymin <- trunc(min(log_aeta))
+      ymax <- trunc(max(log_aeta)) + 1
+      ylim <- c(ymin, ymax)
+      
+      if(characteristic_string == "run") {
+        ymax <- max(log_aeta)
+      }
+
+      plot(at, log_aeta, cex.lab = 1.5, pch = 20, col = "grey", 
+           xlab = "t(s)", ylab = expression(paste(eta, "(t)")), ylim = ylim, xlim = c(0, xmax))
+      abline(lwd = 2, h = meaneta, col="red")
+      residuals_eta <- log_aeta - meaneta
+    }
+    else {
+      eta <- exp(log_eta)
+      lognormal <- "true"
+      Distribution_check(eta, lognormal)
+      mtext(cex = 0.75, paste0("Equidistant initial data # ", 3, 0.75))
+      log_eta <- log(eta)  
+      pacf(eta,lag.max = Dimdata, main = film)
+      acf(eta,lag.max = Dimdata, main = film)
+      
+      ymin <- 0.9 * min(log_eta)
+      ymax <- 1.1 * max(log_eta)
+      ylim <- c(ymin, ymax)
+      xmax <- max(t)
+
+      meaneta <- mean(log_eta)
+      sdeta <- sd(log_eta)
+      trace_meaneta <- c(trace_meaneta, meaneta)
+      trace_sdeta <- c(trace_sdeta, sdeta)
+      skewnesseta <- myskewness(log_eta)
+      kurtosiseta <- mykurtosis(log_eta)
+      trace_skewnesseta <- c(trace_skewnesseta, skewnesseta)
+      trace_kurtosiseta <- c(trace_kurtosiseta, kurtosiseta)
+      meanetamin <- meaneta - sdeta
+      meanetamax <- meaneta + sdeta
+      
+      residuals_eta <- log_eta - meaneta
+      x <- 1:Dimdata
+      plot(t,log_eta, cex.lab = 1.5, type = "l", ylim = ylim, xlim = c(0, xmax))
+      lines(x, mean_log_eta(x, meaneta), type = "l", col = "red", lwd = "1")
+    }
+    
+    mtext(cex = 0.75, paste0("<eta> ", round(exp(meaneta), 2), " st dev+",
+                             round(exp(meanetamax) - exp(meaneta), 2),
+                             " st dev-", round(exp(meaneta) - exp(meanetamin), 2), 3, 0))
+    hist(residuals_eta)
+  } 
+  
+  
+  Film_ID <- c(1:length(Film_series))
+
+  Film_eta_rawdata <- c(Film_eta_rawdata, exp(trace_meaneta[1]))
+  Film_eta_no_outliers <- c(Film_eta_no_outliers, exp(trace_meaneta[2]))
+  Film_eta_detrended <- c(Film_eta_detrended, exp(trace_meaneta[3]))
+  Film_eta <- c(Film_eta, exp(trace_meaneta[4]))
+  
+  Film_sdetamin_rawdata <- c(Film_sdetamin_rawdata, exp(trace_meaneta[1] - trace_sdeta[1]))
+  Film_sdetamin_no_outliers <- c(Film_sdetamin_no_outliers, exp(trace_meaneta[2] - trace_sdeta[2]))
+  Film_sdetamin_detrended <- c(Film_sdetamin_detrended, exp(trace_meaneta[3] - trace_sdeta[3]))
+  Film_sdetamin <- c(Film_sdetamin, exp(trace_meaneta[4] - trace_sdeta[4]))
+  
+  Film_sdetaplus_rawdata <- c(Film_sdetaplus_rawdata, exp(trace_meaneta[1] + trace_sdeta[1]))
+  Film_sdetaplus_no_outliers <- c(Film_sdetaplus_no_outliers, exp(trace_meaneta[2] + trace_sdeta[2]))
+  Film_sdetaplus_detrended <- c(Film_sdetaplus_detrended, exp(trace_meaneta[3] + trace_sdeta[3]))
+  Film_sdetaplus <- c(Film_sdetaplus, exp(trace_meaneta[4] + trace_sdeta[4]))
+  
+  Film_skewness_rawdata <- c(Film_skewness_rawdata, trace_skewnesseta[1])
+  Film_skewness_no_outliers <- c(Film_skewness_no_outliers, trace_skewnesseta[2])
+  Film_skewness_detrended <- c(Film_skewness_detrended, trace_skewnesseta[3])
+  Film_skewness <- c(Film_skewness, trace_skewnesseta[4])
+  
+  Film_kurtosis_rawdata <- c(Film_kurtosis_rawdata, trace_kurtosiseta[1])
+  Film_kurtosis_no_outliers <- c(Film_kurtosis_no_outliers, trace_kurtosiseta[2])
+  Film_kurtosis_detrended <- c(Film_kurtosis_detrended, trace_skewnesseta[3])
+  Film_kurtosis <- c(Film_kurtosis, trace_kurtosiseta[4])
+  
+  Film_averagetime <- c(Film_averagetime, averagetime)
+   
+  
+  if(make_equidistant == "no") {
+    log_aeta <- log_eta
+  }
+  
+  Variogram_experimental(film, log_aeta, Dimdata, simulation)
+  
+  setwd(path_generatedFiles)
+  
+  variogram_lag12 <- read_xlsx(paste(film, "variogram_lag12.xlsx", sep = ""),
+                               n_max = 4, col_names = TRUE)
+
+  variogram <- read_xlsx(paste(film, "variogram.xlsx", sep = ""),
+                         n_max = Dimdata - 1, col_names = TRUE)
+  
+  alfa <- unlist((variogram_lag12[,1]))
+  sigma_sigma_alfa <- unlist(variogram_lag12[,2])
+  epsilon <- unlist((variogram_lag12[,3]))
+  sigma_sigma_epsilon <- unlist(variogram_lag12[,4])
+  
+  Film_alfa <- c(Film_alfa, alfa)
+  Film_sigma_sigma_alfa <- c(Film_sigma_sigma_alfa, sigma_sigma_alfa)
+  Film_epsilon <- c(Film_epsilon, epsilon)
+  Film_tau <- c(Film_tau, 1/epsilon)
+  Film_sigma_sigma_epsilon <- c(Film_sigma_sigma_epsilon, sigma_sigma_epsilon)
+  Film_sigma_alfa_eta <- c(Film_sigma_alfa_eta, sqrt(sigma_sigma_alfa)/trace_meaneta[4])
+  Film_sigma_epsilon_eta <- c(Film_sigma_epsilon_eta, sqrt(sigma_sigma_epsilon)/trace_meaneta[4])
+
+  lag <- unlist((variogram[,1]))
+  variogram_lag <- unlist((variogram[,2]))
+  xlab <- expression(italic(Lag ~ l))
+  ylab <- expression(italic(Variogram))
+  
+  plot(lag, variogram_lag, xlab = xlab, ylab= "", type = "l",
+       ylim = c(0, max(variogram_lag)), xlim = c(0,max(lag)), cex.lab = 1.5)
+  title(ylab = ylab, line = 2.5, cex.lab = 1.5)
+  mtext(cex = 0.75, paste0(film), 3, 0)
+   
+  range <- 0.5 * length(lag)
+  fitlag <- head(lag, range)
+  fitvariogram <- head(variogram_lag, range)
+  ymin <- 0.9 * min(fitvariogram)
+  ymax <- 1.1 * max(fitvariogram)
+  pos_line <- 1
+
+  max_lag <- fitlag[which.max(fitvariogram)]
+  value_above_max1 <- variogram_lag[(max_lag + trunc(Dimdata/12))]
+
+  test_KO <- "KO"
+  test_OK <- "OK"
+  
+  if(value_above_max1 < 0.90 * max(fitvariogram)) { 
+    test_OK <- "OK"
+  }
+
+ 
+  if(TRUE) {
+    if(film == "film18" | film == "film8") {
+      test <- test_OK
+    }
+    else if(film == "film17") {
+      test <- test_KO
+    }
+  }
+  
+  if(FALSE) {
+    if(film == "film12" | film == "film13") {
+      test <- test_OK
+    }
+    else if(film == "film16" | film == "film14") {
+      test <- test_KO
+    }
+  }
+  
+  
+  if(FALSE) {
+    if(film == "film13" | film == "film17" | film == "film19") {
+      test <- test_OK
+    }    
+  } 
+  
+  if(TRUE) {
+    test <- test_OK
+  }
+  
+  FIT0 <- 0
+  FIT1 <- 1
+  FIT2 <- 2 
+  FIT3 <- 3
+  FIT4 <- 4 
+  FIT5 <- 5
+  
+  if(test == "KO" | rand == "OK") {
+    Film_acf_T <- c(Film_acf_T, NA)
+    Film_maxV_T <- c(Film_maxV_T, NA)
+    
+    Film_GRW_constant_cosinus_all <- c(Film_GRW_constant_cosinus_all, NA)
+    Film_GRW_T_all <- c(Film_GRW_T_all, NA)
+    Film_GRW_amplitude_sigma <- c(Film_GRW_amplitude_sigma, NA)
+
+    Film_OU_constant_cosinus_all <- c(Film_OU_constant_cosinus_all, NA)
+    Film_OU_T_all <- c(Film_OU_T_all, NA)
+    Film_OU_amplitude_sigma <- c(Film_OU_amplitude_sigma, NA)
+
+    if(simulation == "yes") {
+      WriteXLS(df, paste(amplitude, nu, trend, "simulationvariogram.xlsx", sep = ""), 
+               SheetNames = "variogram")
+      mtext(cex = 0.75, paste0("amplitude = ", amplitude, ", period = ", 
+                               round(1/nu, 1), " s, trend=  ", round(trend, 1)), 3, 0)
+      pos_line <- -1
+    }
+    
+    plot(fitlag, fitvariogram, xlab = xlab, ylab = "", cex.lab = 1.5,
+         type = "l", ylim = c(ymin, ymax), xlim = c(0, range))
+    title(ylab = ylab, line = 2.5, cex.lab = 1.5)
+    
+    fit_general(film, fitlag, fitvariogram, averagetime, FIT2, pos_line)
+    df_fitoutput <- read.table(paste(film, "Fit_", FIT2, "_variogram.csv", sep = ""), header = TRUE)
+    
+    Film_GRW_constant_all <- c(Film_GRW_constant_all, df_fitoutput$estimate[1])
+    Film_GRW_alfa_all <- c(Film_GRW_alfa_all, df_fitoutput$estimate[2])
+    Film_GRW_sigma_eta_all <- c(Film_GRW_sigma_eta_all, sqrt(df_fitoutput$estimate[1])/trace_meaneta[4])
+    
+    plot(fitlag, fitvariogram, xlab = xlab, ylab = "", cex.lab = 1.5,
+         type = "l", ylim = c(ymin, ymax), xlim = c(0, range))
+    title(ylab = ylab,line = 2.5, cex.lab = 1.5)
+
+    fit_general(film, fitlag, fitvariogram, averagetime, FIT3, pos_line)
+    df_fitoutput <- read.table(paste(film, "Fit_", FIT3, "_variogram.csv", sep = ""), header = TRUE)
+    
+    Film_OU_constant_all <- c(Film_OU_constant_all, df_fitoutput$estimate[1])
+    Film_OU_epsilon_all <- c(Film_OU_epsilon_all, 1/df_fitoutput$estimate[2])
+    Film_OU_tau_all <- c(Film_OU_tau_all, df_fitoutput$estimate[2])
+    Film_OU_sigma_eta_all <- c(Film_OU_sigma_eta_all, sqrt(df_fitoutput$estimate[1])/trace_meaneta[4])
+  }
+  else {
+    Film_acf_T <- c(Film_acf_T, T_acf)
+    T_maxV <- 2 * averagetime * fitlag[which.max(fitvariogram[1:(0.8*max(fitlag))])]
+    Film_maxV_T <- c(Film_maxV_T, T_maxV)
+    
+    plot(fitlag, fitvariogram, xlab = xlab, ylab = "", cex.lab = 1.5, type = "l",
+         ylim = c(ymin, ymax), xlim = c(0, range))
+    title(ylab = ylab,line = 2.5, cex.lab = 1.5)
+    
+    ###############si fit2 marche jusqu'au film19 mais c'est faux
+    fit_general(film, fitlag, fitvariogram, averagetime, FIT0, pos_line)
+    df_fitoutput <- read.table(paste(film, "Fit_", FIT0, "_variogram.csv", sep = ""), header = TRUE)
+    ###############
+    
+    Film_GRW_constant_cosinus_all <- c(Film_GRW_constant_cosinus_all, 2*df_fitoutput$estimate[1])
+    Film_GRW_T_all <- c(Film_GRW_T_all, df_fitoutput$estimate[2])
+    Film_GRW_constant_all <- c(Film_GRW_constant_all, df_fitoutput$estimate[3])
+    Film_GRW_alfa_all <- c(Film_GRW_alfa_all, df_fitoutput$estimate[4])
+    Film_GRW_amplitude_sigma <- c(Film_GRW_amplitude_sigma, ((2*df_fitoutput$estimate[3])/
+                                                               (1-df_fitoutput$estimate[4]^2)))
+    Film_GRW_sigma_eta_all <- c(Film_GRW_sigma_eta_all, sqrt(df_fitoutput$estimate[3])/trace_meaneta[4])
+    
+    plot(fitlag, fitvariogram, xlab = xlab, ylab = "",
+         cex.lab = 1.5, type = "l", 
+         ylim = c(ymin, ymax), xlim = c(0, range))
+    title(ylab = ylab, line = 2.5, cex.lab = 1.5)
+    
+    fit_general(film, fitlag, fitvariogram, averagetime, FIT1, pos_line)
+    df_fitoutput <- read.table(paste(film, "Fit_", FIT1,"_variogram.csv", sep = ""), header = TRUE)
+    
+    Film_OU_constant_cosinus_all <- c(Film_OU_constant_cosinus_all, 2*df_fitoutput$estimate[1])
+    Film_OU_T_all <- c(Film_OU_T_all, df_fitoutput$estimate[2])
+    Film_OU_constant_all <- c(Film_OU_constant_all, df_fitoutput$estimate[3])
+    Film_OU_epsilon_all <- c(Film_OU_epsilon_all, 1/(df_fitoutput$estimate[4]/averagetime))
+    Film_OU_tau_all <- c(Film_OU_tau_all, df_fitoutput$estimate[4])
+    Film_OU_amplitude_sigma <- c(Film_OU_amplitude_sigma, 2*df_fitoutput$estimate[1]/
+                                   (df_fitoutput$estimate[3]*df_fitoutput$estimate[4]))
+    Film_OU_sigma_eta_all <- c(Film_OU_sigma_eta_all, sqrt(df_fitoutput$estimate[3])/trace_meaneta[4])
+  }
+
+  range <- small_lag_range
+  range_plot <- range
+  fitlag <- head(lag, range)
+  fitvariogram <- head(variogram_lag, range)
+  ymin <- 0.9 * min(fitvariogram)
+  ymax <- 1.1 * max(fitvariogram)
+
+  plot(fitlag, fitvariogram, xlab = xlab, ylab = "", cex.lab = 1.5,
+       type = "l", ylim = c(ymin, ymax), xlim = c(0, range))
+  title(ylab = ylab, line = 2.5, cex.lab = 1.5)
+  
+  fit_general(film, fitlag, fitvariogram, averagetime, FIT2, pos_line)
+  df_fitoutput <- read.table(paste(film, "Fit_", FIT2, "_variogram.csv", sep = ""), header = TRUE)
+  
+  Film_GRW_constant_short_time <- c(Film_GRW_constant_short_time, df_fitoutput$estimate[1])
+  Film_GRW_alfa_short_time <- c(Film_GRW_alfa_short_time, df_fitoutput$estimate[2])
+  Film_GRW_sigma_eta_short_time <- c(Film_GRW_sigma_eta_short_time, sqrt(df_fitoutput$estimate[1])/trace_meaneta[4])
+  
+  for (j in 1:range) {
+    y_GRW_master_plot <- c(y_GRW_master_plot,
+                           (fitvariogram[j]*(1-(df_fitoutput$estimate[2]^2))/2/df_fitoutput$estimate[1]))
+    x_GRW_master_plot <- c(x_GRW_master_plot, df_fitoutput$estimate[2]^j)
+  }
+  
+  plot(fitlag, fitvariogram, xlab = xlab, ylab = "", cex.lab = 1.5, type = "l",
+       ylim = c(ymin, ymax), xlim = c(0, range))
+  title(ylab = ylab, line = 2.5, cex.lab = 1.5)
+  
+  fit_general(film, fitlag, fitvariogram, averagetime, FIT3, pos_line)
+  df_fitoutput <- read.table(paste(film, "Fit_", FIT3, "_variogram.csv", sep = ""), header = TRUE)
+  
+  transform_to_lag <- df_fitoutput$estimate[2]/averagetime
+  Film_OU_constant_short_time <- c(Film_OU_constant_short_time, df_fitoutput$estimate[1])
+  Film_OU_epsilon_short_time <- c(Film_OU_epsilon_short_time, 1/transform_to_lag)
+  Film_OU_tau_short_time <- c(Film_OU_tau_short_time, df_fitoutput$estimate[2])
+  Film_OU_sigma_eta_short_time <- c(Film_OU_sigma_eta_short_time,
+                                    sqrt(df_fitoutput$estimate[1])/trace_meaneta[4])
+
+  for (j in 1:range) {
+    y_OUP_master_plot <- c(y_OUP_master_plot, (fitvariogram[j]/transform_to_lag/df_fitoutput$estimate[1]))
+    x_OUP_master_plot <- c(x_OUP_master_plot, j/transform_to_lag)
+  }
+
+  film <- paste(film, "_VolatilityClustering", sep = "")
+  Dimdata <- Dimdata - 1
+  log_aeta_volatility <- abs(diff(log_aeta))
+  
+  plot(tail(at, Dimdata), log_aeta_volatility, type = "l", cex.lab = 1.5, 
+       xlab = "t", ylab = "Volatility proxy")
+  Variogram_experimental(film,log_aeta_volatility, Dimdata, simulation)
+
+  print(film)
+  
+  FIT <- FIT5
+  
+  variogram <- read_xlsx(paste(film, "variogram.xlsx", sep = ""), n_max = Dimdata, col_names = TRUE)
+  lag <- unlist((variogram[, 1]))
+  variogram_lag <- unlist((variogram[, 2]))
+  range <- 0.5 * length(lag)
+  fitlag <- head(lag, range)
+  fitvariogram <- head(variogram_lag, range)
+  ymin <- 0.9 * min(fitvariogram)
+  ymax <- 1.1 * max(fitvariogram)
+  
+  plot(fitlag, fitvariogram, xlab = xlab, ylab = "", cex.lab = 1.5,
+       type = "l", ylim = c(ymin, ymax), xlim = c(0, range))
+  mtext(paste0("Volatility Clustering"), 3 , 2)
+  title(ylab = ylab, line = 2.5, cex.lab = 1.5)
+  
+  fit_general(film, fitlag, fitvariogram, averagetime, FIT, pos_line)
+  df_fitoutput <- read.table(paste(film, "Fit_", FIT, "_variogram.csv", sep = ""), header = TRUE)
+  
+  setwd(path_generatedFiles)
+} 
+```
+From here all films have been analyzed
+
+## Plots for publication
+
+```{r, echo = FALSE, fig.show = TRUE}
+path <- path_Results
+
+par(mfrow = c(2, 2), xaxs = "i", yaxs = "i", mar = c(5, 5, 5, 5))
+film_number <- length(Film_frequencies)
+xlab_GRW <- expression(paste(alpha ^ "l"))
+ylab_GRW <- expression(paste(gamma(l)(1-alpha^2)/(2*sigma^2)))
+xlab_OUP <- expression(paste(epsilon," l"))
+ylab_OUP <- expression(paste(gamma(l)/(tau*sigma^2)))
+
+legend_colors <- c("red", "blue", "green", "orange", "salmon", "magenta", "purple", "brown", 
+                   "olivedrab", "cyan", "sea green", "navy", "violet", "grey")
+legend_markers <- seq(1, length(film_number), by = 1)
+legend_text <- round(Film_frequencies[1:film_number], 3)
+legend_colors <- legend_colors[1:film_number]
+
+xlim <- c(min(x_GRW_master_plot, 1e-3), max(x_GRW_master_plot, 2))
+ylim <- c(min(y_GRW_master_plot, 0.05), max(y_GRW_master_plot, 1.5))
+
+plot(x_GRW_master_plot[1:range_plot], y_GRW_master_plot[1:range_plot], cex.lab = 1.5,
+     log = "xy", xlim = xlim, ylim = ylim, ylab = "",
+     xlab = xlab_GRW, col = legend_colors[1], pch = legend_markers[1])
+title(ylab = ylab_GRW, line = 2.5)
+#stop()
+x <- (1:9999)/10000
+
+lines(x, (1 - x), lwd = 2)
+
+pub_master_x <- NULL
+pub_master_y <- NULL
+pub_line <- NULL
+
+pub_master_x <- c("alfa^l", x_GRW_master_plot[1:range_plot])
+pub_master_y <- c(Film_frequencies[1],
+                  y_GRW_master_plot[1:range_plot], rep("0.0000", range_plot*(film_number - 1)))
+pub_line <- c("1-alfa^l", 1 - x_GRW_master_plot[1:range_plot])
+pub_master_GRW <- c(sprintf("%.6s", pub_master_y))
+
+
+
+for (i in 1:(film_number - 1)) {
+  set_start <- i * range_plot + 1
+  set_end <- i * range_plot + range_plot
+  pub_master_x <- c(pub_master_x, x_GRW_master_plot[set_start:set_end])
+  pub_master_y <- c(Film_frequencies[i + 1], rep("0.0000", set_start - 1),
+                    y_GRW_master_plot[set_start:set_end], 
+                    rep("0.0000", (film_number * range_plot - set_end)))
+  pub_master_GRW <- cbind(pub_master_GRW, sprintf("%.6s", pub_master_y))
+  pub_line <- c(pub_line, 1 - x_GRW_master_plot[set_start:set_end])
+  
+  points(x_GRW_master_plot[set_start:set_end], y_GRW_master_plot[set_start:set_end],
+         col = legend_colors[i + 1], pch = legend_markers[i + 1])
+}
+
+pub_master_GRW <- cbind(sprintf("%.6s", pub_master_x), pub_master_GRW, sprintf("%.6s", pub_line))
+
+write.table(pub_master_GRW, file = paste(path, "plot_master_GRW.txt", sep = ""), quote = FALSE,
+            na = "", sep = " ", col.names = FALSE, row.names = FALSE, dec = ".")
+legend("bottomleft",legend = legend_text, cex = 0.5, pch = legend_markers, col = legend_colors)
+
+xlim = c(min(x_OUP_master_plot, 1e-1), max(x_OUP_master_plot, 10))
+ylim = c(min(y_OUP_master_plot, 0.10), max(y_OUP_master_plot, 1.5))
+
+plot(x_OUP_master_plot[1:range_plot], y_OUP_master_plot[1:range_plot], cex.lab = 1.5,
+     log = "xy", xlim = xlim, ylim = ylim, xlab = xlab_OUP,
+     ylab = "", col = legend_colors[1], pch = legend_markers[1])
+title(ylab = ylab_OUP, line = 2.5)
+#stop()
+
+x <- (1:10000)/100
+lines(x, (1 - exp(-x)), lwd = 2)
+
+pub_master_x <- NULL
+pub_master_y <- NULL
+pub_line <- NULL
+pub_master_x <- c("epsilon l", x_OUP_master_plot[1:range_plot])
+pub_master_y <- c(Film_frequencies[1], y_OUP_master_plot[1:range_plot], 
+                  rep("0.0000", range_plot * (film_number - 1)))
+pub_line <- c("1-exp(- epsilon l)", 1 - exp(-x_OUP_master_plot[1:range_plot]))
+pub_master_OUP <- c(sprintf("%.6s", pub_master_y))
+
+for (i in 1:(film_number - 1)) {
+  set_start <- i * range_plot + 1
+  set_end <- i * range_plot + range_plot
+  pub_master_x <- c(pub_master_x, x_OUP_master_plot[set_start:set_end])
+  pub_master_y <- c(Film_frequencies[i + 1], rep("0.0000",set_start - 1),
+                    y_OUP_master_plot[set_start:set_end],
+                    rep("0.0000", (film_number*range_plot-set_end)))
+  pub_master_OUP <- cbind(pub_master_OUP, sprintf("%.6s", pub_master_y))
+  pub_line <- c(pub_line, 1 - exp(-x_OUP_master_plot[set_start:set_end]))
+  
+  points(x_OUP_master_plot[set_start:set_end], y_GRW_master_plot[set_start:set_end],
+         col = legend_colors[i+1], pch = legend_markers[i+1])
+}
+
+pub_master_OUP <- cbind(sprintf("%.6s", pub_master_x), pub_master_OUP, sprintf("%.6s", pub_line))
+write.table(pub_master_OUP, file = paste(path, "plot_master_OUP.txt", sep = ""),
+            quote = FALSE, na = "", sep = " ", col.names = FALSE, row.names = FALSE, dec = ".")
+legend("bottomright",cex = 0.5, legend = legend_text, pch = legend_markers, col = legend_colors)
+
+xlab <- expression(paste(omega, " ", (rad.s^-1))) 
+y1lab <- expression(paste(alpha))
+y2lab <- expression(paste(sigma^2))
+y3lab <- expression(paste(epsilon))
+y4lab <- expression(paste(tau (s)))
+y5lab <- expression(paste(sigma/ln(eta)))
+y6lab <- expression(paste(eta (Pa.s)))
+y7lab <- expression(paste("<",t,">", (s)))
+y8lab <- expression(paste("T", (s)))
+y9lab <- expression(paste(2, "A"["T"], " , ", 2*sigma^2/(1-alpha^2)))
+y10lab <- expression(paste("Skewness ", varsigma))
+y11lab <- expression(paste("Kurtosis ", kappa))
+#xlim <- c(0.00001, 20)
+
+plot(Film_frequencies, Film_alfa, cex.lab = 1.5, log = "xy", col = "red", pch = 17, 
+     xlab = xlab, ylab = "", xlim = xlim)
+title(ylab = y1lab, line = 2.5)
+#stop()
+
+Film_alfa[Film_alfa > 1] <- NA
+
+plot(cex.lab = 1.5, Film_frequencies, Film_alfa, xlab = xlab, ylab = "", log = "xy",
+     xlim = xlim <- c(0.1, 20), ylim = c(0.1, 2), pch = 17, col = "red")
+title(ylab = y1lab, line = 2.5)
+points(Film_frequencies, Film_GRW_alfa_all, col = "red", pch = 15)
+points(Film_frequencies, Film_GRW_alfa_short_time, col = "red", pch = 20)
+points(Film_frequencies, Film_ito_alfa, pch = 3)
+#stop()
+
+alfa_all <- c(Film_alfa, Film_GRW_alfa_all, Film_GRW_alfa_short_time, Film_ito_alfa)
+abline(h = mean(alfa_all, na.rm = TRUE), col = "red")
+abline(h = mean(alfa_all, na.rm = TRUE) + sd(alfa_all, na.rm = TRUE), col = "red", lwd = 0.5)
+abline(h = mean(alfa_all, na.rm = TRUE) - sd(alfa_all, na.rm = TRUE), col = "red", lwd = 0.5)
+legend("topright", cex = 0.65, c(expression(paste("GRW lag1-2")),
+                              expression(paste("GRW")),
+                              expression(paste("GRW lag1-7")),
+                              expression(paste("Ito"))),
+                              pch = c(17, 15, 20, 3),
+                              col = c(rep("red", 3), "black"))
+
+av_alfa <- round(mean(alfa_all, na.rm = TRUE), 2)
+er_alfa <- round(sd(alfa_all, na.rm = TRUE), 2)
+mtext(cex = 0.75, paste0("< > =", av_alfa, " ± ", er_alfa), 3, -3, col = "red", adj = 0.25)
+
+alfa_frequency <- data.frame(Film_frequencies, Film_alfa, Film_GRW_alfa_all, 
+                             Film_GRW_alfa_short_time, Film_ito_alfa)
+
+write.table(format(alfa_frequency, digits = 3), quote = FALSE, 
+            file = paste(path, "plot_alfa_frequency.txt", sep = ""),
+            na = "", sep = " ", col.names = TRUE, row.names = FALSE, dec = ".")
+
+plot(Film_frequencies, Film_sigma_sigma_alfa, cex.lab = 1.5, log = "xy", col = "red",
+     pch = 17, xlab = xlab, ylab = "", ylim = c(0.01, 1), xlim = xlim)
+title(ylab = y2lab, line = 2.5)
+points(Film_frequencies, Film_sigma_sigma_epsilon, col = "blue", pch = 17)
+points(Film_frequencies, Film_GRW_constant_all, col = "red", pch = 15)
+points(Film_frequencies, Film_GRW_constant_short_time, col = "red", pch = 20)
+points(Film_frequencies, Film_OU_constant_all, col = "blue", pch = 15)
+points(Film_frequencies, Film_OU_constant_short_time, col="blue", pch = 20)
+points(Film_frequencies, Film_sigma_sigma_ito, pch = 3)
+
+
+sigma_sigma_frequency <- data.frame(Film_frequencies, 
+                                 Film_sigma_sigma_alfa, 
+                                 Film_sigma_sigma_epsilon, 
+                                 Film_GRW_constant_all, 
+                                 Film_GRW_constant_short_time, 
+                                 Film_OU_constant_all, 
+                                 Film_OU_constant_short_time, 
+                                 Film_sigma_sigma_ito)
+
+write.table(format(sigma_sigma_frequency, digits = 3), quote = FALSE,
+            file = paste(path, "plot_sigma_sigma_frequency.txt", sep = ""), 
+            na = "", sep = " ", col.names = TRUE, row.names = FALSE, dec = ".")
+
+plot(Film_frequencies, Film_sigma_alfa_eta, cex.lab = 1.5, log = "xy",
+     col = "red", pch = 17, xlab = xlab, ylab = "", ylim = c(0.01, 1), xlim = xlim)
+title(ylab = y5lab, line = 2.5)
+points(Film_frequencies, Film_sigma_epsilon_eta, col = "blue", pch = 17)
+points(Film_frequencies, Film_GRW_sigma_eta_all, col = "red", pch = 15)
+points(Film_frequencies, Film_GRW_sigma_eta_short_time, col = "red", pch = 20)
+points(Film_frequencies, Film_OU_sigma_eta_all, col = "blue", pch = 15)
+points(Film_frequencies, Film_OU_sigma_eta_short_time, col = "blue", pch = 20)
+
+ln_freq <- NULL
+sigma_ln_eta <- NULL
+
+freq <- c(Film_frequencies,
+       Film_frequencies,
+       Film_frequencies,
+       Film_frequencies,
+       Film_frequencies,
+       Film_frequencies)
+
+sigma_eta <- c(Film_sigma_alfa_eta,
+            Film_sigma_epsilon_eta,
+            Film_GRW_sigma_eta_all,
+            Film_GRW_sigma_eta_short_time,
+            Film_OU_sigma_eta_all,
+            Film_OU_sigma_eta_short_time)
+
+sigmafit <- nlsLM(sigma_eta ~ Model_sigma_eta(freq, power, cte), start = list(power = 0.4, cte = 0.2))
+summary(sigmafit)
+lines(sort(freq), sort(predict(sigmafit)), col = "black")
+power <- coef(sigmafit)[1]
+cte <- coef(sigmafit)[2]
+error_power <- confint(sigmafit, level = 0.682)
+
+mtext(cex = 0.75, expression(paste(" ~ ", omega^beta)), 3, -2, adj = 0.1)
+mtext(cex = 0.75, expression(paste(beta, " = ")), 3, -3.2, adj = 0.1)
+mtext(cex = 0.75, paste0(round(power, 3), " ± ", round((power - error_power[1,1]), 2)), 3, -3, adj = 0.3)
+legend("bottomright", cex = 0.65,
+       c(expression(paste("GRW lag1-2")),
+         expression(paste("OUP lag1-2")),
+         expression(paste("GRW")),
+         expression(paste("OUP")),
+         expression(paste("GRW lag1-7")),
+         expression(paste("OUP lag1-7"))),
+       pch = c(17, 17, 15, 15, 20, 20),
+       col = c("red", "blue", "red", "blue", "red", "blue"))
+
+sigma_logeta_frequency <- data.frame(Film_frequencies,
+                                  Film_sigma_alfa_eta,
+                                  Film_sigma_epsilon_eta,
+                                  Film_GRW_sigma_eta_all,
+                                  Film_GRW_sigma_eta_short_time,
+                                  Film_OU_sigma_eta_all,
+                                  Film_OU_sigma_eta_short_time)
+
+write.table(format(sigma_logeta_frequency, digits = 3), quote = FALSE,
+            file = paste(path, "plot_sigma_logeta_frequency.txt", sep = ""),
+            na = "", sep = " ", col.names = TRUE, row.names = FALSE, dec = ".")
+
+plot(Film_frequencies,Film_epsilon, cex.lab = 1.5, log = "x",
+     col = "blue", pch = 17, xlab = xlab, ylab = "", xlim = xlim)
+title(ylab = y3lab, line = 2.5)
+
+Film_epsilon[Film_epsilon <= 0] <- NA
+
+plot(Film_frequencies, Film_epsilon, cex.lab = 1.5,
+     ylab = "", xlab = xlab, log = "xy", ylim = c(0.02, 2), xlim = xlim, pch = 17, col = "blue")
+title(ylab = y3lab, line = 2.5)
+points(Film_frequencies, Film_OU_epsilon_all, col = "blue", pch = 15)
+points(Film_frequencies, Film_OU_epsilon_short_time, col="blue", pch = 20)
+legend("bottomright", cex = 0.65,
+       c(expression(paste("OUP lag1-2")),
+         expression(paste("OUP")),
+         expression(paste("OUP lag1-7"))),
+       pch = c(17,15,20),
+       col = c("blue","blue","blue"))
+
+epsilons <- c(Film_epsilon, Film_OU_epsilon_all, Film_OU_epsilon_short_time)
+abline(h = mean(epsilons, na.rm = TRUE), col = "blue", lwd = 2)
+abline(h = (mean(epsilons, na.rm = TRUE) - sd(epsilons, na.rm = TRUE)), col = "blue")
+abline(h = (mean(epsilons, na.rm = TRUE) + sd(epsilons, na.rm = TRUE)), col = "blue")
+
+txt <- -1
+mtext(cex = 0.75, paste0("< > =", round(mean(epsilons, na.rm = TRUE), 2),
+                         " lags"), 3, -5.5 - txt, col = "blue", adj = 0.9)
+hist(epsilons, xlab = expression(paste(epsilon(lag))))
+
+epsilon_frequency <- data.frame(Film_frequencies, Film_epsilon,
+                                Film_OU_epsilon_all, Film_OU_epsilon_short_time)
+
+write.table(format(epsilon_frequency, digits = 3), quote = FALSE,
+            file = paste(path, "plot_epsilon_frequency.txt", sep = ""),
+            na = "", sep = " ", col.names = TRUE, row.names = FALSE, dec = ".")
+
+
+Film_tau[Film_tau <= 0] <- NA
+
+plot(cex.lab = 1.5, Film_frequencies, Film_tau, log = "x",
+     ylim = c(min(Film_tau, na.rm = TRUE) - 5, max(Film_tau, na.rm = TRUE) + 5),
+     col = "blue", pch = 17, xlab = xlab, ylab = "", xlim = xlim)
+title(ylab = y4lab, line = 2.5)
+
+plot(Film_frequencies, Film_tau, cex.lab = 1.5,
+     log = "xy", xlab = xlab, ylab = "", ylim = c(0.1, 100), xlim = xlim, pch = 17, col = "blue")
+title(ylab = y4lab, line = 2.5)
+points(Film_frequencies, Film_OU_tau_all, col = "blue", pch = 15)
+points(Film_frequencies, Film_OU_tau_short_time, col = "blue", pch = 20)
+points(Film_frequencies, Film_acf_tau, col = "green", pch = 15)
+points(Film_frequencies, Film_ito_tau, pch = 3)
+
+taus <- c(Film_tau, Film_OU_tau_all, Film_OU_tau_short_time, Film_acf_tau, Film_ito_tau)
+meanlog <- mean(log(taus), na.rm = TRUE)
+sdlog <- sd(log(taus), na.rm = TRUE)
+
+abline(h = exp(meanlog), col = "blue")
+abline(h = exp(meanlog + sdlog), col = "blue", lwd = 0.5)
+abline(h = exp(meanlog - sdlog), col = "blue", lwd = 0.5)
+legend("topright", cex = 0.65,
+       c(expression(paste("OUP lag1-2")),
+         expression(paste("OUP")),
+         expression(paste("OUP lag1-7")),
+         expression(paste("ACF")),
+         expression(paste("Ito"))),
+       pch = c(17, 15, 20, 15, 3),
+       col = c("blue","blue","blue","green","black"))
+mtext(cex = 0.75, paste0("< > =", round(exp(meanlog), 2), " s"),3 , -6.5 - txt, col = "blue", adj = 0.9)
+
+tau_na_omit <- na.omit(data.frame(Film_frequencies, Film_tau))
+freq <- c(tau_na_omit$Film_frequencies,
+       Film_frequencies,
+       Film_frequencies,
+       Film_frequencies,
+       Film_frequencies)
+tau <- c(tau_na_omit$Film_tau,
+      Film_OU_tau_all,
+      Film_OU_tau_short_time,
+      Film_acf_tau,
+      Film_ito_tau)
+
+taufit <- nlsLM(tau ~ Model_tau(freq, cte, power), start = list(cte = 0.35, power = -1),
+                na.action = na.omit)
+print(summary(taufit))
+
+power <- coef(taufit)[2]
+cte <- coef(taufit)[1]
+
+lines(freq, (predict(taufit)), col = "black")
+mtext(cex = 0.75, expression(paste("~ ", omega^beta)), 3, -9.8 - txt, adj= 0.1)
+mtext(cex = 0.75, expression(paste(beta, " = ")), 3, -11 - txt, adj = 0.1)
+
+result = tryCatch( {
+  mtext(cex=0.75,paste0(" ± ", round((power - confint(taufit, 
+                                                      level = 0.683)[2]), 2)), 3, -10.8 - txt, adj = 0.3)
+}
+,error=function(e) {
+  print("Cannot determine errors")
+} 
+,finally = {
+  mtext(cex=0.75,paste0(round(power, 2)), 3, -10.8 - txt, adj = 0.2)
+})
+
+hist(taus)
+
+Film_tau[Film_tau < 0] <- NA
+
+tau_frequency <- data.frame(Film_frequencies,
+                         Film_tau,
+                         Film_OU_tau_all,
+                         Film_OU_tau_short_time,
+                         Film_acf_tau,
+                         Film_ito_tau)
+
+write.table(format(tau_frequency, digits = 3), quote = FALSE,
+             file = paste(path, "plot_tau_frequency.txt", sep = ""), na = "", 
+             sep = " ", col.names = TRUE, row.names = FALSE, dec = ".")
+
+plot(Film_frequencies, Film_GRW_amplitude_sigma, cex.lab = 1.5,
+     log = "xy", xlab = xlab, ylab = "",
+     ylim = c(0.02, 2), xlim = xlim,
+     pch = 15, col = "red")
+points(Film_frequencies, Film_GRW_constant_cosinus_all, pch = 2, col = "red")
+title(ylab = y9lab, line = 2.5)
+
+legend("topright", cex = 0.75,
+       c(expression(paste(2*sigma^2/(1-alpha^2))), expression(paste(2, "A"["T"]))),
+       pch = c(15, 2),
+       col = c("red", "red"))
+
+Amplitude_Sigma_frequency <- data.frame(Film_frequencies, Film_GRW_amplitude_sigma,
+                                         Film_GRW_constant_cosinus_all)
+write.table(format(Amplitude_Sigma_frequency, digits = 3), quote = FALSE,
+            file = paste(path, "plot_Amplitude_Sigma_frequency.txt", sep = ""),
+            na = "", sep = " ", col.names = TRUE, row.names = FALSE, dec = ".")
+
+plot(Film_frequencies, Film_GRW_T_all, cex.lab = 1.5,
+     xlab = xlab, ylab = "", cex = 1.5, pch = 1, col = "red",
+     log = "xy", xlim = xlim, ylim = c(10,1000))
+title(ylab = y8lab, line = 2.5)
+
+abline(lwd = 2, h = mean(Film_GRW_T_all, na.rm = TRUE), col = "red")
+points(Film_frequencies, Film_OU_T_all, cex = 1.5, pch = 4, col = "blue", xlim = xlim, ylim = ylim)
+
+abline(lwd = 2, h = mean(Film_OU_T_all, na.rm = TRUE), col = "blue")
+points(Film_frequencies, Film_acf_T, cex = 1.5, col = "grey", pch = 1)
+
+abline(lwd = 2, h = mean(Film_acf_T, na.rm = TRUE), col = "grey")
+points(Film_frequencies, Film_maxV_T, cex = 1, pch = 20, xlim = xlim, ylim = ylim)
+
+abline(lwd = 2, h = mean(Film_maxV_T, na.rm = TRUE))
+mtext(cex = 0.75, paste0("< > = ", round(mean(Film_GRW_T_all, na.rm = TRUE), 0), " s"), 3, -1, 
+      adj = 0.7, col = "red")
+mtext(cex = 0.75, paste0("< > = ", round(mean(Film_OU_T_all, na.rm = TRUE), 0), " s"), 3, -1.75, 
+      adj = 0.7, col = "blue")
+mtext(cex = 0.75, paste0("< > = ", round(mean(Film_acf_T, na.rm = TRUE), 0), " s"), 3, -2.5, 
+      adj = 0.7, col = "grey")
+mtext(cex = 0.75, paste0("< > = ", round(mean(Film_maxV_T, na.rm = TRUE), 0), " s"), 3, -3.25, 
+      adj = 0.7, col = "black")
+
+legend("bottomleft", cex = 0.75, 
+       c(expression(paste("GRW")), 
+         expression(paste("OUP")), 
+         expression(paste("ACF (min)")), 
+         expression(paste("Variogram (max)"))), 
+       pch = c(1, 4, 1, 20), 
+       col = c("red", "blue", "grey", "black"))
+
+T_all <- c(Film_GRW_T_all,Film_OU_T_all,Film_acf_T,Film_maxV_T)
+hist(T_all, main = "Histogram all periods T", xlab = "T(s)")
+mtext(cex = 0.75, paste0("< > =", round(mean(T_all, na.rm = TRUE), 0), " s ± ", 
+                         round(sd(T_all, na.rm = TRUE), 0) ), 3, 0.5)
+
+T_frequency <- data.frame(Film_frequencies, Film_GRW_T_all, Film_OU_T_all, Film_acf_T, Film_maxV_T)
+write.table(format(T_frequency, digits = 3), quote = FALSE, file = paste(path, "plot_T_frequency.txt", sep = ""), na = "", sep = " ", col.names = TRUE, row.names = FALSE, dec = ".")
+
+plot(Film_frequencies, Film_averagetime, cex.lab = 1.5, log = "xy", pch = 3,
+     xlab = xlab, ylab = y7lab, xlim = xlim, ylim = c(0.2, 20))
+
+plot(Film_frequencies, Film_eta, cex.lab = 1.5, log = "xy", pch = 20, col = "red", xlab = xlab, ylab = y6lab, xlim = xlim, ylim = c(1, 100)) 
+arrows(Film_frequencies, Film_sdetamin, Film_frequencies, Film_sdetaplus, 
+       length = 0.05,  angle = 90,  code = 3, col = "red")
+points(Film_frequencies, Film_eta_ito, pch = 3, 
+       xlab = xlab, ylab = y6lab, xlim = xlim, ylim = ylim)
+
+ln_etafit <- nlsLM(Film_eta ~ Model_ln_eta(Film_frequencies, cte, power), start = list(cte = 1, power = -1))
+print(summary(ln_etafit))
+
+power <- coef(ln_etafit)[2]
+cte <- coef(ln_etafit)[1]
+lines((Film_frequencies), (predict(ln_etafit)), col = "red")
+mtext(cex = 0.75, expression(paste("~ ", omega^beta)), 3, -8.8 - txt, adj = 0.1)
+mtext(cex = 0.75, expression(paste(beta,  " = ")), 3, -10 - txt, adj = 0.1)
+
+result = tryCatch( 
+  {
+    mtext(cex = 0.75, paste0("        ± ", round((power - confint(ln_etafit, level = 0.683)[2]), 2)),
+          3, -10 - txt, adj = 0.3)
+}, error = function(e) { 
+  print("Cannot determine errors")
+}, finally = {
+  mtext(cex = 0.75, paste0(round(power, 2)), 3, -10-txt, adj = 0.2)
+})
+
+eta_frequency_error <-  data.frame(Film_frequencies, Film_eta, Film_sdetamin, Film_sdetaplus)
+write.table(format(eta_frequency_error, digits = 3), quote = FALSE, 
+            file = paste(path, "plot_eta_frequency_errors.txt", sep = ""), 
+            na = "", sep = " ", col.names = TRUE, row.names = FALSE, dec = ".")
+
+eta_frequency <- data.frame(Film_frequencies, Film_eta)
+write.table(format(eta_frequency, digits = 3), quote = FALSE, 
+            file = paste(path, "plot_eta_frequency.txt", sep = ""), 
+            na = "", sep = " ", col.names = TRUE, row.names = FALSE, dec = ".")
+
+ylim <- c(1, 100)
+plot(Film_frequencies, Film_eta, cex.lab = 1.5, log = "xy", pch = 21, 
+     cex = 1.5, col = "red", xlab = xlab, ylab = y6lab, xlim = xlim, ylim = ylim) 
+points(Film_frequencies, Film_eta_rawdata, pch = 20, xlab = xlab, ylab = y6lab, xlim = xlim, ylim = ylim)
+points(Film_frequencies, Film_eta_no_outliers, pch = 1, xlab = xlab, ylab = y6lab, xlim = xlim, ylim = ylim)
+points(Film_frequencies, Film_eta_detrended, pch = 2, xlab = xlab, ylab = y6lab, xlim = xlim, ylim = ylim)
+points(Film_frequencies, Film_eta_ito, pch = 3, xlab = xlab, ylab = y6lab, xlim = xlim, ylim = ylim)
+
+ylim <- c(-2, 2)
+plot(Film_frequencies, Film_skewness, cex.lab = 1.5, log = "x", pch = 21, 
+     cex = 1.5, col = "red", xlab = xlab, ylab = y10lab, xlim = xlim, ylim = ylim) 
+points(Film_frequencies, Film_skewness_rawdata, pch = 20, 
+       xlab = xlab, ylab = y6lab, xlim = xlim, ylim = ylim)
+points(Film_frequencies, Film_skewness_no_outliers, pch = 1, 
+       xlab = xlab, ylab = y6lab, xlim = xlim, ylim = ylim)
+points(Film_frequencies, Film_skewness_detrended, pch = 2, 
+       xlab = xlab, ylab = y6lab, xlim = xlim, ylim = ylim)
+
+ylim <- c(0.00001, 10)
+plot(Film_frequencies, Film_kurtosis, cex.lab = 1.5, log = "xy", pch = 21, 
+     cex = 1.5, col = "red", xlab = xlab, ylab = y11lab, xlim = xlim, ylim = ylim) 
+points(Film_frequencies, Film_kurtosis_rawdata, pch = 20, 
+       xlab = xlab, ylab = y6lab, xlim = xlim, ylim = ylim)
+points(Film_frequencies, Film_kurtosis_no_outliers, pch = 1, 
+       xlab = xlab, ylab = y6lab, xlim = xlim, ylim = ylim)
+points(Film_frequencies, Film_kurtosis_detrended, pch = 2, 
+       xlab = xlab, ylab = y6lab, xlim = xlim, ylim = ylim)
+
+
+y12lab <- "Original Number of data"
+y13lab <- "Fraction of Outliers"
+extremes <- data.frame(x = Film_frequencies, y1 = Film_numberofdata, y2 = Film_outliers/Film_numberofdata)
+
+with(extremes, plot(x, y1, cex.lab = 1.5, pch = 20, col = "grey", log = "xy",
+                    xlab = xlab, ylab = y12lab, ylim = c(10, 1000), xlim = xlim))
+par(new = TRUE)
+with(extremes, plot(x, y2, cex.lab = 1.5, axes = F, log = "xy", 
+                    cex = 1, pch = 15, col = "red", xlab = NA, ylab = NA, ylim = c(0.01, 0.2), xlim = xlim))
+axis(side = 4)
+mtext(side = 4, line = 3, y2lab, cex = 0.8)
+legend("bottomright", cex = 0.75, legend = c(y12lab, y13lab), pch = c(20, 15), col = c("grey", "red"))
+
+#par(mfrow = c(2, 2), xaxs = "i", yaxs = "i", mar = c(5, 5, 5, 5))
+#Scalingdelta_aeta()
+par(mfrow=c(1,1))
+
+setwd(path_generatedFiles)
+sink("Fit Output.txt", append = FALSE)
+
+Fitoutput_path <- path_OutputAll
+file.copy(from = list.files(pattern = "Fit Output.txt", full.names = TRUE), 
+          overwrite = TRUE, to = Fitoutput_path)
+
+if(TRUE) {
+  RStudio_path <- path_Screenplots
+  
+  plots.dir.paths  <- list.files(path_OutputAll, pattern = ".png", full.names = TRUE)
+  plots.png.paths <- list.files(plots.dir.paths, pattern = ".png", full.names = TRUE)
+  
+  file.copy(from = plots.dir.paths, to = RStudio_path)  
+  
+  plots.png.details <- file.info(plots.dir.paths)
+  print(plots.png.details)
+  
+  plots.png.details <- plots.png.details[order(plots.png.details$mtime, decreasing = TRUE),]
+  print(plots.png.details)
+  
+  sorted.png.names = gsub(plots.dir.paths, RStudio_path,  
+                        row.names(plots.png.details), fixed = TRUE)
+  
+  numbered.png.names <- paste0(RStudio_path, 1:length(sorted.png.names), ".png")
+  print(numbered.png.names)
+  
+  file.rename(from = sorted.png.names, to = numbered.png.names)
+}
+
+GF_path <- path_generatedFiles
+RStudio_path <- path_Screenplots
+DAM_path <- path_DataAnalysisMethod
+DAMD_path <- path_Dataprep
+DAR_path <- path_Results
+
+#file.remove(list.files(GF_path, include.dirs  = FALSE, full.names = TRUE, recursive = TRUE))
+#file.remove(list.files(DAM_path, include.dirs = FALSE, full.names = TRUE, recursive = TRUE))
+#file.remove(list.files(DAR_path, include.dirs = FALSE, full.names = TRUE, recursive = TRUE))
+#file.remove(list.files(DAMD_path, include.dirs = FALSE, full.names = TRUE, recursive = TRUE))
+#file.remove(list.files(RStudio_path, include.dirs = FALSE, full.names = TRUE, recursive = TRUE))
+```
+
+
+
+
+
+

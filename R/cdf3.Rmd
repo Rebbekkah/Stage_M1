@@ -1,0 +1,194 @@
+---
+title: "Stage cdf 3"
+author: "Rebecca Goulancourt"
+date: "25/03/2021"
+output: pdf_document
+---
+
+
+# Génération des données
+
+```{r}
+data <- rnorm(10000, 0.5, 2)
+data <- as.matrix(data)
+```
+
+Je trie la matrice:
+```{r}
+data_sort <- as.matrix(sort(data, decreasing = FALSE))
+```
+
+# Calcul du cdf (sans la fonction ecdf())
+
+```{r}
+sc <- matrix(0, nrow = nrow(data_sort), ncol = ncol(data_sort), byrow = TRUE)
+for (i in 1:nrow(data_sort)) {
+  sc[i] <- i/nrow(data_sort) # matrice de la cdf
+}
+```
+
+Je combine dans une même matrice les valeurs et cdf correspondantes:
+```{r}
+mat_cdf <-  cbind(data_sort, sc)
+colnames(mat_cdf) <- c("valeurs x", "sc")
+```
+
+# plot
+
+```{r}
+plot(density(data_sort), main = "Density distribution", xlab = "x", ylab = "density")
+abline(v = mean(data_sort), col = "red")
+legend("topleft", legend = "mean", lty = 1:2,  col = "red")
+```
+
+```{r}
+plot(data_sort, type = "l", main = "plot des données", ylab = "valeurs", xlab = "individus")
+```
+
+
+Je récupère l'indice de la moyenne
+```{r}
+vec_data_sort <- as.vector(data_sort)
+mean <- mean(vec_data_sort)
+for (i in 1:length(vec_data_sort)) {
+  if (vec_data_sort[i] >= mean) {
+    ind <- as.matrix(c(i-1, vec_data_sort[i]))
+    break
+  }
+}
+indice <- ind[1,]
+value <- ind[2,]
+```
+
+Je considère les valeurs comme 2 séries l'une après l'autre : une avant et une après la moyenne
+```{r}
+Y_seg1 <- NULL #série 1
+Y_seg2 <- NULL #série 2
+```
+
+Lorsque i dépasse la moyenne alors Y[i] = 1 - Y[i]
+```{r}
+Y <- as.vector(sc)
+for (i in 1:length(Y)) {
+  if (i < indice) {
+    Y[i] <- Y[i]
+    Y_seg1 <- rbind(Y_seg1, Y[i]) #je stocke les valeurs < moyenne dans la série 1
+  }
+  else if (i > indice) {
+    Y[i] <- 1 - Y[i]
+    Y_seg2 <- rbind(Y_seg2, Y[i]) #je stocke les valeurs > moyenne dans la série 2
+  }
+}
+```
+
+Je sépare de même les données en 2 segments (inférieur ou supérieur à la moyenne)
+```{r}
+data_seg1 <- NULL
+data_seg2 <-  NULL
+for(i in 1:nrow(data_sort)){
+  if (i<=indice) {
+    data_seg1[i] <-  data_sort[i]
+  }
+  else if (i>=indice) {
+    data_seg2[i] <- data_sort[i]
+  }
+}
+data_seg2 <- data_seg2[!is.na(data_seg2)] #je supprime les NA générés lors de la boucle
+```
+
+```{r}
+data_1 <- cbind((abs(data_seg1-mean)), Y_seg1)
+data_2 <- cbind((abs(mean-data_seg2)), Y_seg2)
+```
+```{r}
+plot(data_1, xlim = c(0.05,5),ylim=c(0.01,0.6), log="xy")
+lines(data_2, type= "p", col="red")
+```
+
+
+```{r}
+data_sort_abs_1 <- abs(as.matrix(mean - data_1))
+data_final1 <- cbind(data_sort_abs_1, Y_seg1)
+data_sort_abs_2 <- abs(as.matrix(data_2 - mean))
+```
+```{r}
+#data_final <- as.matrix(rbind(data_sort_abs_1, data_sort_abs_2))
+data_final <- as.matrix(sort(data_final, decreasing = FALSE))
+```
+
+```{r}
+plot(data_final, Y, type= "l")
+```
+```{r}
+data_seg1 <- as.matrix(data_seg1)
+sc_seg1 <- matrix(0, nrow = nrow(data_seg1), ncol = ncol(data_seg1), byrow = TRUE)
+for (i in 1:nrow(data_sort)) {
+  sc_seg1[i] <- i/nrow(data_sort) # matrice de la cdf
+}
+```
+1 mat : points générés et cdf --> 2 colonnes
+les points générés sont sorted : i/100 --> sc_seg = Y
+x = sorted generated values
+
+qd on a une série de données --> sorting puis on fait cdf qui monte de 0 à 1 avec i/nb de points
+
+```{r}
+
+```
+
+
+```{r}
+plot(as.matrix(data_seg1), ylim = c(-5,5))
+lines(as.matrix(data_seg2), type = "p", col = "red")
+```
+
+prendre les moyennes de dataseg1 et 2
+
+
+
+Je mets les valeurs de x en absolue pour chaque segment
+```{r}
+data_sort_abs_1 <- abs(as.matrix(mean(data_seg1) - data_seg1))
+data_sort_abs_2 <- abs(as.matrix(data_seg2 - mean(data_seg2)))
+```
+
+Je recombine les deux segments:
+```{r}
+data_final <- as.matrix(rbind(data_sort_abs_1, data_sort_abs_2))
+```
+
+
+
+```{r}
+#plot(data_final, Y, log ="y", main ="cdf", ylab = "log(cdf)", xlab = "x", type = "l")
+```
+
+```{r}
+data_final <- as.matrix(sort(data_final, decreasing = FALSE))
+```
+```{r}
+plot(data_final, Y, log ="y", main ="cdf", ylab = "log(cdf)", xlab = "x", type = "l")
+```
+
+
+Ou alors
+data_sort_1 <- NULL
+data_sort_2 <- NULL
+for (i in 1:length(vec_data_sort)) {
+  if (i < indice) {
+    data_sort_1[i] <- mean(data_sort) - vec_data_sort[i]
+  }
+  else if (i >= indice) {
+    data_sort_2[i] <- vec_data_sort[i] - mean(data_sort)
+  }
+}
+data_sort_2 <- data_sort_2[!is.na(data_sort_2)]
+data_sort_final <- as.matrix(rbind(data_sort_1, data_sort_2))
+
+```{r}
+
+```
+
+
+
+
